@@ -444,7 +444,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 
     <!-- SVG topology -->
     <div class="topo-area">
-      <svg id="topSvg" viewBox="0 0 960 300" xmlns="http://www.w3.org/2000/svg">
+      <svg id="topSvg" viewBox="0 0 1060 340" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="dotGrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <circle cx="12" cy="12" r="1" fill="#2A3445" opacity=".5"/>
@@ -524,14 +524,14 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 // ═══════════════════════════════════════════════════════
 
 const NODES = [
-  { id:'browser',   name:'Browser',        type:'CLIENT',    icon:'🌐', cx:65,  cy:155, tt:'用戶端瀏覽器，發起所有請求，最終渲染頁面。'},
-  { id:'resolver',  name:'OS Resolver',    type:'DNS-CACHE', icon:'💻', cx:200, cy:155, tt:'作業系統 DNS 解析器，持有本地快取，向上游查詢。'},
-  { id:'recursive', name:'Recursive DNS',  type:'RESOLVER',  icon:'🔄', cx:345, cy:155, tt:'遞回解析器（如 8.8.8.8），代替客戶端完成完整 DNS 查詢鏈。'},
-  { id:'root',      name:'Root DNS',       type:'ROOT-NS',   icon:'🌍', cx:480, cy:68,  tt:'DNS 根伺服器，指向各 TLD Name Server。全球 13 組，Anycast 1000+ 節點。'},
-  { id:'tld',       name:'TLD DNS',        type:'TLD-NS',    icon:'📂', cx:480, cy:155, tt:'頂級域名伺服器，持有該 TLD 下所有網域的 NS 委派記錄。'},
-  { id:'auth',      name:'Auth DNS',       type:'AUTH-NS',   icon:'🔑', cx:480, cy:242, tt:'權威 DNS，持有最終 A/AAAA 記錄，是 DNS 查詢的真相來源。'},
-  { id:'webserver', name:'Web Server',     type:'ORIGIN',    icon:'🖥', cx:640, cy:155, tt:'源站伺服器，接收 HTTP/HTTPS 請求並回傳網頁資源。'},
-  { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:820, cy:155, tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
+  { id:'browser',   name:'Browser',        type:'CLIENT',    icon:'🌐', cx:76,  cy:170, tt:'用戶端瀏覽器，發起所有請求，最終渲染頁面。'},
+  { id:'resolver',  name:'OS Resolver',    type:'DNS-CACHE', icon:'💻', cx:236, cy:170, tt:'作業系統 DNS 解析器，持有本地快取，向上游查詢。'},
+  { id:'recursive', name:'Recursive DNS',  type:'RESOLVER',  icon:'🔄', cx:396, cy:170, tt:'遞回解析器（如 8.8.8.8），代替客戶端完成完整 DNS 查詢鏈。'},
+  { id:'root',      name:'Root DNS',       type:'ROOT-NS',   icon:'🌍', cx:548, cy:78,  tt:'DNS 根伺服器，指向各 TLD Name Server。全球 13 組，Anycast 1000+ 節點。'},
+  { id:'tld',       name:'TLD DNS',        type:'TLD-NS',    icon:'📂', cx:548, cy:170, tt:'頂級域名伺服器，持有該 TLD 下所有網域的 NS 委派記錄。'},
+  { id:'auth',      name:'Auth DNS',       type:'AUTH-NS',   icon:'🔑', cx:548, cy:262, tt:'權威 DNS，持有最終 A/AAAA 記錄，是 DNS 查詢的真相來源。'},
+  { id:'webserver', name:'Web Server',     type:'ORIGIN',    icon:'🖥', cx:726, cy:170, tt:'源站伺服器，接收 HTTP/HTTPS 請求並回傳網頁資源。'},
+  { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:916, cy:170, tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
 ];
 
 const EDGES_DEF = [
@@ -837,11 +837,11 @@ function drawTopology() {
   edgesG.innerHTML=''; nodesG.innerHTML='';
 
   // DNS zone indicator
-  const zone = svgEl('rect',{x:420,y:28,width:135,height:232,rx:12,
+  const zone = svgEl('rect',{x:490,y:30,width:166,height:270,rx:12,
     fill:'none',stroke:'#2A3445',
     'stroke-dasharray':'4 3','stroke-width':'1','opacity':'.6'});
   edgesG.appendChild(zone);
-  const zoneLabel = svgEl('text',{x:488,y:22,
+  const zoneLabel = svgEl('text',{x:573,y:24,
     'text-anchor':'middle','font-size':'8.5','font-weight':'600',
     'letter-spacing':'1','fill':'#2A3445','font-family':'JetBrains Mono,monospace'});
   zoneLabel.textContent='DNS RESOLUTION';
@@ -853,7 +853,7 @@ function drawTopology() {
     let path;
     if(e.curved){
       path = svgEl('path',{
-        'd':`M ${from.cx},${from.cy+20} C ${from.cx},295 ${to.cx},295 ${to.cx},${to.cy+20}`,
+        'd':`M ${from.cx},${from.cy+25} C ${from.cx},330 ${to.cx},330 ${to.cx},${to.cy+25}`,
         'class':'e-path e-dashed','id':e.id
       });
     } else {
@@ -868,30 +868,30 @@ function drawTopology() {
   // Nodes
   NODES.forEach(n=>{
     const g = svgEl('g',{'id':'nd-'+n.id,'cursor':'pointer'});
-    const W=88,H=58;
+    const W=108,H=74;
     // Card
-    const rect = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:H,rx:10,
+    const rect = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:H,rx:12,
       fill:'var(--card)',stroke:'var(--border)','stroke-width':'1.5','id':'nrect-'+n.id});
     // Top accent strip
     const strip = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:3,rx:2,
       fill:'var(--border)','id':'nstrip-'+n.id});
     // Status dot
-    const dot = svgEl('circle',{cx:n.cx+W/2-10,cy:n.cy-H/2+8,r:4,
+    const dot = svgEl('circle',{cx:n.cx+W/2-12,cy:n.cy-H/2+10,r:5,
       fill:'var(--text2)','id':'ndot-'+n.id});
     // Icon
-    const icon = svgEl('text',{x:n.cx,y:n.cy-8,
-      'text-anchor':'middle','dominant-baseline':'middle','font-size':'18'});
+    const icon = svgEl('text',{x:n.cx,y:n.cy-10,
+      'text-anchor':'middle','dominant-baseline':'middle','font-size':'22'});
     icon.textContent=n.icon;
     // Name
-    const lbl = svgEl('text',{x:n.cx,y:n.cy+10,
+    const lbl = svgEl('text',{x:n.cx,y:n.cy+13,
       'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'10','font-weight':'600','fill':'var(--text)',
+      'font-size':'11.5','font-weight':'600','fill':'var(--text)',
       'font-family':'Inter,sans-serif'});
     lbl.textContent=n.name;
     // Type
-    const type = svgEl('text',{x:n.cx,y:n.cy+22,
+    const type = svgEl('text',{x:n.cx,y:n.cy+27,
       'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'7.5','fill':'var(--text2)',
+      'font-size':'8.5','fill':'var(--text2)',
       'font-family':'JetBrains Mono,monospace','letter-spacing':'0.5'});
     type.textContent=n.type;
 
@@ -964,8 +964,8 @@ function getEdgeCurvePoints(fromId, toId) {
   if(isCurved){
     const b=getNode('browser'), w=getNode('webserver');
     return fromId==='browser'
-      ? {type:'cubic', x0:b.cx, y0:b.cy+20, cx1:b.cx, cy1:295, cx2:w.cx, cy2:295, x1:w.cx, y1:w.cy+20}
-      : {type:'cubic', x0:w.cx, y0:w.cy+20, cx1:w.cx, cy1:295, cx2:b.cx, cy2:295, x1:b.cx, y1:b.cy+20};
+      ? {type:'cubic', x0:b.cx, y0:b.cy+25, cx1:b.cx, cy1:330, cx2:w.cx, cy2:330, x1:w.cx, y1:w.cy+25}
+      : {type:'cubic', x0:w.cx, y0:w.cy+25, cx1:w.cx, cy1:330, cx2:b.cx, cy2:330, x1:b.cx, y1:b.cy+25};
   }
   return {type:'linear', x0:f.cx, y0:f.cy, x1:t.cx, y1:t.cy};
 }
