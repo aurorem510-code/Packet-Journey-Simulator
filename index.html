@@ -283,6 +283,11 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .b-render{background:var(--success-a);color:var(--success);border:1px solid rgba(69,212,131,.25)}
 .b-internal{background:rgba(148,163,184,.08);color:var(--text2);border:1px solid rgba(148,163,184,.2)}
 .b-error{background:var(--error-a);color:var(--error);border:1px solid rgba(255,107,107,.25)}
+.b-ftp{background:rgba(255,184,77,.12);color:#FFB84D;border:1px solid rgba(255,184,77,.28)}
+.b-smtp{background:rgba(192,132,252,.12);color:#C084FC;border:1px solid rgba(192,132,252,.28)}
+.b-imap{background:rgba(45,212,191,.12);color:#2DD4BF;border:1px solid rgba(45,212,191,.28)}
+.b-pop3{background:rgba(251,113,133,.12);color:#FB7185;border:1px solid rgba(251,113,133,.28)}
+.b-snmp{background:rgba(129,140,248,.12);color:#818CF8;border:1px solid rgba(129,140,248,.28)}
 
 .rp-body{padding:16px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1}
 
@@ -381,6 +386,19 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   </div>
 
   <div class="hdr-right">
+    <div class="scenario-group">
+      <label>Protocol</label>
+      <select class="sel" id="protocolSel">
+        <option value="auto">⚡ Auto</option>
+        <option value="https">🔒 HTTPS</option>
+        <option value="http">🌐 HTTP</option>
+        <option value="ftp">📁 FTP</option>
+        <option value="smtp">📤 SMTP</option>
+        <option value="imap">📥 IMAP</option>
+        <option value="pop3">📬 POP3</option>
+        <option value="snmp">📊 SNMP</option>
+      </select>
+    </div>
     <div class="scenario-group">
       <label>Scenario</label>
       <select class="sel" id="scenarioSel">
@@ -544,13 +562,773 @@ const EDGES_DEF = [
   { id:'e-ws',   from:'webserver', to:'render',    style:'solid',  curved:false },
 ];
 
-const STAGES = ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
+function getStages(p) {
+  if(p==='ftp')  return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
+  if(p==='smtp') return ['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
+  if(p==='imap') return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
+  if(p==='pop3') return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','POP3 Auth','Download','Complete'];
+  if(p==='snmp') return ['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
+  return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
+}
+const STAGES = getStages('https');
 
 const TOOLTIP_DATA = {};
 NODES.forEach(n=>TOOLTIP_DATA[n.id]=n.tt);
 
+// ─── SHARED DNS STEPS BUILDER ──────────────────────────
+function dnsStepsBuilder(host, isMX) {
+  const tld = host.split('.').pop();
+  const domain = host.split('.').slice(-2).join('.');
+  return [
+    {
+      id:'dns-cache', stageIdx:1,
+      title: isMX?'查詢 DNS MX 快取':'查詢 DNS 快取', titleEN: isMX?'DNS MX Cache Check':'DNS Cache Check',
+      protocol:'DNS / Cache', layer:'Application', packetType: isMX?'MX Cache Miss':'Cache Miss',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'browser', to:'resolver', pkt: isMX?'MX?':'Cache?', pktColor:'#3DD9C5',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DNS', kpiLat:'~ 1ms', kpiStatus:'MISS',
+      what: isMX
+        ?`郵件客戶端查詢 ${domain} 的 MX 記錄，找出負責接收郵件的 Mail Server 主機名稱。Cache Miss，需進行完整 DNS MX 查詢。`
+        :`本機 DNS 快取未命中（Cache Miss），需完整走過 DNS 查詢鏈取得目標主機 IP。`,
+      details:[
+        {k:'Query Name',v:isMX?domain:host},{k:'Query Type',v:isMX?'MX':'A (IPv4)'},
+        {k:'Browser Cache',v:'MISS'},{k:'OS Cache',v:'MISS'},
+      ],
+      tech: isMX
+        ?'MX 記錄指向郵件交換伺服器，含優先級（priority）欄位。優先級越低越優先被嘗試連線。'
+        :'DNS 快取分多層：瀏覽器 → OS（/etc/hosts）→ 路由器 → ISP Resolver，任一層命中即跳過後續查詢。',
+      fail:null,
+      interview: isMX
+        ?'SMTP 不直接查 A 記錄，而是先查 MX 記錄，再對 MX hostname 做 A 查詢。一個域名可有多個 MX 記錄作備援，透過 priority 欄位控制優先順序。'
+        :'DNS 快取多層結構是效能優化的基礎。`dns-prefetch` 讓瀏覽器提前解析第三方域名，縮短 DNS 查詢延遲。',
+    },
+    {
+      id:'dns-recursive', stageIdx:1,
+      title:'請求 Recursive DNS', titleEN:'Query Recursive Resolver',
+      protocol:'DNS over UDP (port 53)', layer:'Application', packetType:'DNS Recursive Query',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'resolver', to:'recursive', pkt:'RD=1', pktColor:'#3DD9C5',
+      activeNodes:['resolver','recursive'], activeEdges:['e-rr'],
+      kpiProto:'DNS/UDP', kpiLat:'~ 5ms', kpiStatus:'QUERY',
+      what:`OS Resolver 向 Recursive DNS（如 8.8.8.8）發出遞回查詢，請求解析 ${isMX?domain+' MX':host+' A'} 記錄。`,
+      details:[
+        {k:'Dst IP',v:'8.8.8.8:53'},{k:'Protocol',v:'UDP'},
+        {k:'Query',v:isMX?domain+' MX?':host+' A?'},{k:'RD Flag',v:'1 (Recursion Desired)'},
+      ],
+      tech:'Recursive Resolver 優先查快取，miss 後才開始迭代查詢（Root → TLD → Auth）。DNS 通常使用 UDP，回應超過 512 bytes 時切換至 TCP。',
+      fail:null,
+      interview:'Recursive Resolver 是「代理人」模型：客戶端只需一次 UDP 查詢，Resolver 完成所有迭代查詢。Google 8.8.8.8 與 Cloudflare 1.1.1.1 都是公共 Recursive DNS。',
+    },
+    {
+      id:'dns-root', stageIdx:1,
+      title:'Recursive → Root DNS', titleEN:'Query Root DNS',
+      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Iterative Query',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'recursive', to:'root', pkt:'.'+tld+' NS?', pktColor:'#3DD9C5',
+      activeNodes:['recursive','root'], activeEdges:['e-rt'],
+      kpiProto:'DNS/UDP', kpiLat:'~ 20ms', kpiStatus:'REFERRAL',
+      what:`Recursive DNS 向 Root Name Server 查詢，Root 指向 .${tld} 的 TLD Name Server。`,
+      details:[
+        {k:'Root Server',v:'a.root-servers.net'},
+        {k:'Response',v:'.'+tld+' TLD NS referral'},{k:'AA Flag',v:'0 (not authoritative)'},
+      ],
+      tech:'全球共 13 組 Root Server（A–M），透過 Anycast 技術部署 1,000+ 個節點。Root Server 只保存 TLD 的 NS 記錄。',
+      fail:null,
+      interview:'Root Server 的 IP 被硬編碼進每個 Recursive Resolver（Root Hints File）。Root Server 不回答「IP 是什麼」，只回答「去哪裡問 TLD」——體現 DNS 分層委派的設計哲學。',
+    },
+    {
+      id:'dns-tld', stageIdx:1,
+      title:'Recursive → TLD DNS', titleEN:'Query TLD DNS',
+      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Iterative Query',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'recursive', to:'tld', pkt:domain+' NS?', pktColor:'#3DD9C5',
+      activeNodes:['recursive','tld'], activeEdges:['e-tl'],
+      kpiProto:'DNS/UDP', kpiLat:'~ 30ms', kpiStatus:'REFERRAL',
+      what:`TLD Name Server 將 Recursive DNS 指向 ${domain} 的 Authoritative DNS。`,
+      details:[
+        {k:'TLD Server',v:'a.gtld-servers.net'},
+        {k:'Response',v:'NS records for '+domain},{k:'Delegation',v:'ns1.'+domain},
+      ],
+      tech:'TLD Server 只保存 NS 記錄，不持有 A 記錄——每層只知道「下一層在哪裡」，這是 DNS 分層設計的核心。',
+      fail:null,
+      interview:'TLD 委派讓 DNS 具備極高可擴展性：全球數百萬域名不需集中管理，透過分層委派分散到各 Authoritative DNS。',
+    },
+    {
+      id:'dns-auth', stageIdx:1,
+      title:'Recursive → Auth DNS', titleEN:'Query Authoritative DNS',
+      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Authoritative Query',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'recursive', to:'auth', pkt: isMX?'MX?':'A Record?', pktColor:'#3DD9C5',
+      activeNodes:['recursive','auth'], activeEdges:['e-ra'],
+      kpiProto:'DNS/UDP', kpiLat:'~ 45ms', kpiStatus:'OK',
+      what:`Auth DNS 回傳 ${isMX?domain+' 的 MX 記錄（mail.'+domain+'）及其對應 IP':host+' 最終 A 記錄'}。AA=1 代表權威答案。`,
+      details:[
+        {k:'Auth Server',v:'ns1.'+domain},
+        {k:'AA Flag',v:'1 (Authoritative Answer)'},
+        isMX?{k:'Response',v:'mail.'+domain+' priority 10'}:{k:'Response',v:'93.184.216.34 (TTL 3600)'},
+      ],
+      tech:'只有 Authoritative DNS 的回應才帶有 AA=1 旗標，代表最終權威答案。TTL 決定 Recursive Resolver 快取此記錄多久。',
+      fail:null,
+      interview:'Authoritative DNS 是 DNS 查詢的真相來源。現代雲端服務（AWS Route 53、Cloudflare DNS）支援 GeoDNS（地理定向）和健康檢查，讓 DNS 不只是「查 IP」，也是流量調度工具。',
+    },
+    {
+      id:'dns-return', stageIdx:2,
+      title:'IP 位址回傳', titleEN:'IP Returned',
+      protocol:'DNS Response', layer:'Application', packetType:'DNS Response',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'resolver', to:'browser', pkt: isMX?'MX+IP':'93.184…', pktColor:'#45D483',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DNS', kpiLat:'~ 50ms', kpiStatus:'RESOLVED',
+      what: isMX
+        ?`MX 記錄與郵件伺服器 IP 回傳至客戶端（mail.${domain} → 198.51.100.5）。現在可以建立 TCP 連線。`
+        :`IP 逐層回傳。客戶端現在知道目標 IP，可以開始建立 TCP 連線。`,
+      details: isMX
+        ?[{k:'MX Record',v:'mail.'+domain},{k:'Priority',v:'10'},{k:'IP',v:'198.51.100.5',c:'c-success'},{k:'TTL',v:'3600s'}]
+        :[{k:'Resolved IP',v:'93.184.216.34',c:'c-success'},{k:'TTL',v:'3600s'},{k:'Total DNS Time',v:'~50ms'}],
+      tech:'DNS 解析結果快取至 OS Resolver（TTL=3600s）。後續查詢直接命中快取，延遲降至 <1ms。',
+      fail:null,
+      interview:'DNS 解析時間是影響 TTFB 的重要因素。DoH（DNS over HTTPS）和 DoT（DNS over TLS）可防止 ISP 監聽 DNS 查詢，是現代隱私強化方案。',
+    },
+  ];
+}
+
+// ─── SHARED TCP HANDSHAKE STEPS BUILDER ────────────────
+function tcpStepsBuilder(port, scenario) {
+  return [
+    {
+      id:'tcp-syn', stageIdx:3,
+      title:'TCP SYN', titleEN:'TCP Handshake — SYN',
+      protocol:`TCP (port ${port})`, layer:'Transport', packetType:'SYN',
+      badgeClass: scenario==='tcp-timeout'?'b-error':'b-tcp',
+      badgeText: scenario==='tcp-timeout'?'TIMEOUT':'TCP',
+      from:'browser', to:'webserver', pkt:'SYN', pktColor:'#4DA3FF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus: scenario==='tcp-timeout'?'TIMEOUT':'SYN',
+      what:`客戶端向目標伺服器 port ${port} 發送 SYN 封包，啟動 TCP 三向交握，請求建立可靠連線。`,
+      details:[
+        {k:'Flags',v:'SYN',c:'c-info'},{k:'Seq (ISN)',v:'1000 (random)'},
+        {k:'Dst Port',v:String(port)},{k:'Window',v:'65535'},{k:'MSS',v:'1460 bytes'},
+      ],
+      tech:'ISN（Initial Sequence Number）隨機產生，防止序號預測攻擊。TCP Window Size 決定一次可傳輸多少資料，影響吞吐量。',
+      fail: scenario==='tcp-timeout'?`SYN 送出後無回應（Connection Timeout）。常見原因：防火牆封鎖 port ${port}、主機不可達、服務未啟動。瀏覽器顯示「ERR_CONNECTION_TIMED_OUT」。`:null,
+      interview:'三向交握的核心目的是建立「雙向可靠通道」。SYN Flood 攻擊大量偽造 SYN 封包耗盡伺服器半開連線資源，SYN Cookie 是常見防禦機制。',
+      isError: scenario==='tcp-timeout',
+    },
+    {
+      id:'tcp-synack', stageIdx:3,
+      title:'TCP SYN-ACK', titleEN:'TCP Handshake — SYN-ACK',
+      protocol:'TCP', layer:'Transport', packetType:'SYN-ACK',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'webserver', to:'browser', pkt:'SYN-ACK', pktColor:'#4DA3FF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 20ms', kpiStatus:'SYN-ACK',
+      what:'伺服器回傳 SYN-ACK：確認收到（ACK）並發起自己的序號（SYN），完成第二次握手。',
+      details:[
+        {k:'Flags',v:'SYN + ACK',c:'c-info'},{k:'Server Seq',v:'5000 (random)'},
+        {k:'Ack',v:'1001 (Client ISN+1)'},{k:'Window',v:'65535'},
+      ],
+      tech:'SYN-ACK 同時扮演兩個角色：ACK 確認了 Client 的 SYN，SYN 則建立 Server 的序號追蹤。',
+      fail:null,
+      interview:'SYN-ACK 是三向交握最優雅的設計：Server 用一個封包同時完成「回應 Client」和「向 Client 發起連線」兩件事，節省一個 RTT。',
+    },
+    {
+      id:'tcp-ack', stageIdx:3,
+      title:'TCP ACK — 連線建立', titleEN:'TCP Handshake — ACK',
+      protocol:'TCP', layer:'Transport', packetType:'ACK',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'browser', to:'webserver', pkt:'ACK', pktColor:'#4DA3FF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
+      what:'三向交握完成，雙方進入 ESTABLISHED 狀態，可以開始傳輸應用層資料。',
+      details:[
+        {k:'Flags',v:'ACK',c:'c-success'},{k:'Status',v:'ESTABLISHED',c:'c-success'},{k:'RTT',v:'~20ms'},
+      ],
+      tech:'TCP ESTABLISHED 後，若為加密協定（HTTPS/IMAPS/SMTPS/FTPS），還需進行 TLS 握手（1–2 個 RTT）。TLS 1.3 將握手壓縮至 1 RTT。',
+      fail:null,
+      interview:'TCP 連線由 4-tuple（源 IP、源 Port、目標 IP、目標 Port）唯一確定。HTTP keep-alive 允許複用同一條 TCP 連線，避免重複握手開銷。',
+    },
+  ];
+}
+
+// ─── FTP STEPS BUILDER ─────────────────────────────────
+function buildFtpSteps(scenario, host) {
+  const domain = host.split('.').slice(-2).join('.');
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'解析 FTP URL', titleEN:'FTP URL Parsing',
+      protocol:'FTP Client', layer:'Browser', packetType:'URL Parse',
+      badgeClass:'b-ftp', badgeText:'FTP',
+      from:null, to:'browser', pkt:'URL', pktColor:'#FFB84D',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'FTP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`客戶端解析 FTP URL：協定（ftp）、主機（${host}）、路徑（/pub/file.txt）。FTP 採用雙通道架構：控制通道（port 21）傳送命令，資料通道（port 20 或高位 port）傳輸檔案。`,
+      details:[
+        {k:'URL',v:'ftp://'+host+'/pub/file.txt'},
+        {k:'Control Port',v:'21'},{k:'Data Port',v:'20 (Active) / Dynamic (Passive)'},
+        {k:'Auth',v:'USER/PASS or Anonymous'},
+      ],
+      tech:'FTP（RFC 959）是雙通道協定，控制通道持續保持連線，資料通道按需建立。Passive Mode（PASV）由客戶端發起資料連線，穿越 NAT/防火牆更友善，是現代預設模式。',
+      fail:null,
+      interview:'FTP 是明文協定，USER/PASS 在網路上完全暴露。現代環境應優先使用 SFTP（SSH File Transfer Protocol，port 22）或 FTPS（FTP over TLS）。SFTP 只需單一 port，防火牆規則更簡單，是 DevOps 最常見選擇。',
+    },
+    ...dnsStepsBuilder(host, false),
+    ...tcpStepsBuilder(21, scenario),
+    {
+      id:'ftp-220', stageIdx:4,
+      title:'FTP 220 — 伺服器歡迎', titleEN:'FTP 220 Welcome Banner',
+      protocol:'FTP (port 21)', layer:'Application', packetType:'220 Banner',
+      badgeClass:'b-ftp', badgeText:'FTP',
+      from:'webserver', to:'browser', pkt:'220', pktColor:'#FFB84D',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'FTP', kpiLat:'~ 5ms', kpiStatus:'CONNECTED',
+      what:'TCP 連線建立後，FTP 伺服器主動傳送 220 回應（Service Ready），包含伺服器軟體版本與歡迎訊息。這是 FTP 會話的第一步。',
+      details:[
+        {k:'Code',v:'220',c:'c-success'},{k:'Msg',v:'FTP Server Ready (vsftpd 3.0.5)'},
+        {k:'Direction',v:'Server → Client (Server speaks first)'},
+      ],
+      tech:'FTP 回應碼三位數：1xx 正向預備、2xx 正向完成、3xx 正向中間、4xx 暫時性失敗、5xx 永久性失敗。220 = 服務就緒。',
+      fail:null,
+      interview:'FTP 220 Banner 常暴露伺服器軟體版本，是安全稽核的重點。Security hardening 建議隱藏版本資訊。Banner Grabbing 是滲透測試的基本技術，用於識別服務類型與版本。',
+    },
+    {
+      id:'ftp-auth', stageIdx:4,
+      title:'FTP 認證 USER/PASS', titleEN:'FTP Authentication',
+      protocol:'FTP (port 21)', layer:'Application', packetType:'USER / PASS',
+      badgeClass:'b-ftp', badgeText:'FTP',
+      from:'browser', to:'webserver', pkt:'USER/PASS', pktColor:'#FFB84D',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'FTP', kpiLat:'~ 10ms', kpiStatus:'AUTH',
+      what:'客戶端傳送 USER → 伺服器回 331（需要密碼）→ 客戶端傳送 PASS → 伺服器回 230（登入成功）。所有憑證均以明文傳輸。',
+      details:[
+        {k:'C→S',v:'USER anonymous'},{k:'S→C',v:'331 Password required'},
+        {k:'C→S',v:'PASS user@email.com'},{k:'S→C',v:'230 Login successful',c:'c-success'},
+      ],
+      tech:'FTP 匿名登入（anonymous FTP）是公開檔案分發的傳統方式，username=anonymous, password=任意 email。在標準 FTP 中所有命令均為明文。',
+      fail:null,
+      interview:'FTP 明文傳輸是重大安全風險，在 Wireshark 中可直接看到 USER/PASS 命令。FTPS 有兩種模式：Explicit（先建立明文連線再升級 TLS，port 21）和 Implicit（直接 TLS，port 990）。SFTP 完全不同，基於 SSH 協定，加密更徹底。',
+    },
+    {
+      id:'ftp-pasv', stageIdx:5,
+      title:'PASV — 被動模式資料通道', titleEN:'PASV — Data Channel Setup',
+      protocol:'FTP (port 21)', layer:'Application', packetType:'PASV',
+      badgeClass:'b-ftp', badgeText:'FTP',
+      from:'browser', to:'webserver', pkt:'PASV', pktColor:'#4DA3FF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'FTP', kpiLat:'~ 5ms', kpiStatus:'PASV',
+      what:'客戶端傳送 PASV 命令，伺服器回 227 並提供資料通道的 IP:Port（高位動態埠）。客戶端建立第二條 TCP 連線至該 Port 進行資料傳輸。',
+      details:[
+        {k:'C→S',v:'PASV'},{k:'S→C',v:'227 Entering Passive Mode'},
+        {k:'Data Addr',v:'198.51.100.5:50234 (dynamic port)',c:'c-info'},
+        {k:'New TCP',v:'Client → Server:50234'},
+      ],
+      tech:'Active Mode（PORT）伺服器主動連線客戶端 port 20，穿越 NAT 困難。Passive Mode（PASV）伺服器開放高位動態 Port 等候，客戶端主動連線，防火牆友善。',
+      fail:null,
+      interview:'PASV vs PORT 是 FTP 面試常考題。Active Mode 下 Server 從 port 20 連回 Client，幾乎無法穿越客戶端防火牆。EPSV（Extended Passive）是 PASV 的 IPv6 版本，只回傳 port 號而非 IP:port，更安全。',
+    },
+    {
+      id:'ftp-retr', stageIdx:5,
+      title:'RETR — 下載檔案資料流', titleEN:'FTP File Transfer (RETR)',
+      protocol:'FTP Data Channel', layer:'Application', packetType:'RETR',
+      badgeClass:'b-ftp', badgeText:'FTP',
+      from:'webserver', to:'browser', pkt:'Data', pktColor:'#45D483',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'FTP', kpiLat:'~300ms', kpiStatus:'TRANSFER',
+      what:'控制通道傳送 RETR 命令，伺服器透過資料通道傳輸檔案原始位元組流。傳輸完成後伺服器傳送 226 Transfer Complete。',
+      details:[
+        {k:'C→S (CTRL)',v:'RETR /pub/file.txt'},
+        {k:'S→C (DATA)',v:'[binary stream, 2.4 MB]'},
+        {k:'S→C (CTRL)',v:'226 Transfer complete',c:'c-success'},
+        {k:'Mode',v:'Binary (TYPE I)'},
+      ],
+      tech:'FTP 支援 ASCII 模式（TYPE A，轉換換行符）和 Binary 模式（TYPE I，原始位元組）。傳輸非文字檔必須使用 Binary 模式，否則會因換行符轉換而損壞檔案。REST <offset> 命令支援斷點續傳。',
+      fail:null,
+      interview:'FTP 雙通道設計讓防火牆需要額外處理（Application Layer Gateway）。在現代 DevOps 環境，FTP 幾乎已被 rsync over SSH、SCP、或 S3-compatible object storage 取代。CI/CD pipeline 的 artifact 傳輸通常使用 HTTPS API 或 SSH。',
+    },
+    {
+      id:'ftp-done', stageIdx:6,
+      title:'檔案下載完成 — QUIT', titleEN:'File Download Complete',
+      protocol:'FTP', layer:'Application', packetType:'226 Complete',
+      badgeClass:'b-ftp', badgeText:'FTP',
+      from:'browser', to:'render', pkt:'Saved', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'FTP', kpiLat:'~350ms', kpiStatus:'COMPLETE',
+      what:'檔案透過 FTP 資料通道成功下載並儲存至本機。控制通道傳送 QUIT 命令，伺服器回 221 並關閉連線。',
+      details:[
+        {k:'C→S',v:'QUIT'},{k:'S→C',v:'221 Goodbye'},
+        {k:'File Saved',v:'/Downloads/file.txt',c:'c-success'},{k:'Total',v:'~350ms'},
+      ],
+      tech:'FTP 主動關閉：QUIT 命令後伺服器回 221，TCP 四次揮手結束。與 HTTP keep-alive 不同，FTP 控制連線是「一次會話」，QUIT 後完全釋放。',
+      fail:null,
+      interview:'FTP 傳輸效率低的核心原因之一是雙通道的建立開銷：每次傳輸都需要建立新的資料通道 TCP 連線。REST + RETR 實現斷點續傳。現代替代方案：rsync（增量同步）、SCP（安全複製）、rclone（多雲端儲存同步）。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  return S;
+}
+
+// ─── SMTP STEPS BUILDER ────────────────────────────────
+function buildSmtpSteps(scenario, host) {
+  const domain = host.split('.').slice(-2).join('.');
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'解析郵件地址', titleEN:'Email Address Parsing',
+      protocol:'SMTP Client (MUA)', layer:'Application', packetType:'Addr Parse',
+      badgeClass:'b-smtp', badgeText:'SMTP',
+      from:null, to:'browser', pkt:'ADDR', pktColor:'#C084FC',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'SMTP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`郵件客戶端（MUA）解析目標郵件地址（user@${domain}），提取收件人域名（${domain}），準備查詢其 MX 記錄以找到負責接收郵件的伺服器。`,
+      details:[
+        {k:'From',v:'sender@yourdomain.com'},{k:'To',v:'user@'+domain},
+        {k:'MX Target',v:domain},{k:'Submit Port',v:'587 (SUBMISSION)'},
+        {k:'Auth',v:'STARTTLS + AUTH LOGIN'},
+      ],
+      tech:'SMTP 架構分三層：MUA（郵件用戶端）、MSA（郵件提交伺服器，port 587）、MTA（郵件傳遞代理，port 25）。現代郵件流程：MUA → MSA（587/SMTPS 465）→ MTA → MTA → 收件人 MDA（IMAP/POP3）。',
+      fail:null,
+      interview:'SMTP port 25 是 MTA 對 MTA 的傳遞；port 587（SUBMISSION）是 MUA 對 MSA 的提交，需要身份驗證；port 465 是 SMTPS（TLS 封裝）。Port 25 通常被 ISP 封鎖以防止垃圾郵件。這三個 port 的區別在面試中很常考。',
+    },
+    ...dnsStepsBuilder(host, true),
+    ...tcpStepsBuilder(587, scenario),
+    {
+      id:'smtp-220', stageIdx:4,
+      title:'SMTP 220 — 伺服器橫幅', titleEN:'SMTP 220 Service Ready',
+      protocol:'SMTP (port 587)', layer:'Application', packetType:'220 Banner',
+      badgeClass:'b-smtp', badgeText:'SMTP',
+      from:'webserver', to:'browser', pkt:'220', pktColor:'#C084FC',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SMTP', kpiLat:'~ 5ms', kpiStatus:'READY',
+      what:`TCP 連線建立後，SMTP 伺服器主動傳送 220 Ready 橫幅。格式：「220 mail.${domain} ESMTP Postfix」。ESMTP = Extended SMTP，支援擴充命令。`,
+      details:[
+        {k:'Code',v:'220',c:'c-success'},{k:'Msg',v:'mail.'+domain+' ESMTP Postfix'},
+        {k:'ESMTP',v:'Extended SMTP (RFC 5321)'},
+        {k:'Direction',v:'Server → Client'},
+      ],
+      tech:'ESMTP（RFC 5321）是 SMTP（RFC 821）的超集，增加了 EHLO、STARTTLS、AUTH、SIZE 等擴充命令。現代所有郵件伺服器都使用 ESMTP。',
+      fail:null,
+      interview:'220 橫幅同樣暴露軟體資訊（Postfix/Exim/Sendmail）。Postfix 是最常用的 MTA，因其安全性設計優於老舊的 Sendmail。在郵件安全審計中，banner grabbing 用於識別伺服器類型。',
+    },
+    {
+      id:'smtp-ehlo', stageIdx:4,
+      title:'EHLO — 宣告能力', titleEN:'SMTP EHLO — Capabilities',
+      protocol:'SMTP', layer:'Application', packetType:'EHLO / 250',
+      badgeClass:'b-smtp', badgeText:'SMTP',
+      from:'browser', to:'webserver', pkt:'EHLO', pktColor:'#C084FC',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SMTP', kpiLat:'~ 10ms', kpiStatus:'250 OK',
+      what:`客戶端傳送 EHLO（Extended Hello），宣告自己的主機名稱。伺服器回 250 並列出支援的擴充功能清單（STARTTLS、AUTH、SIZE 等）。`,
+      details:[
+        {k:'C→S',v:'EHLO mail.yourdomain.com'},
+        {k:'S→C',v:'250-mail.'+domain+' Hello'},
+        {k:'Caps',v:'STARTTLS, AUTH LOGIN PLAIN, SIZE 52428800'},
+      ],
+      tech:'EHLO 取代舊式 HELO 命令，允許伺服器列出支援的 ESMTP 擴充功能。客戶端根據此清單決定是否使用 STARTTLS 加密、AUTH 驗證方式、最大郵件大小等。',
+      fail:null,
+      interview:'EHLO 是 SMTP 協議的核心握手。HELO vs EHLO：HELO 是舊式 SMTP（RFC 821），EHLO 是 ESMTP（RFC 5321）。現代伺服器若客戶端用 HELO，通常仍會降級回應，但無法使用 STARTTLS 等擴充功能。',
+    },
+    {
+      id:'smtp-auth', stageIdx:5,
+      title:'STARTTLS + AUTH — 加密認證', titleEN:'STARTTLS & AUTH LOGIN',
+      protocol:'SMTP / TLS', layer:'Application', packetType:'STARTTLS + AUTH',
+      badgeClass:'b-smtp', badgeText:'SMTP',
+      from:'browser', to:'webserver', pkt:'AUTH', pktColor:'#C084FC',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SMTP/TLS', kpiLat:'~ 50ms', kpiStatus:'AUTH OK',
+      what:'客戶端發送 STARTTLS 升級至 TLS 加密通道，再傳送 AUTH LOGIN（base64 編碼的用戶名與密碼）。伺服器回 235 Authentication Successful。',
+      details:[
+        {k:'C→S',v:'STARTTLS'},{k:'S→C',v:'220 Ready to start TLS'},
+        {k:'[TLS Handshake]',v:'TLS 1.3 established',c:'c-accent'},
+        {k:'C→S',v:'AUTH LOGIN'},{k:'S→C',v:'235 Authentication OK',c:'c-success'},
+      ],
+      tech:'STARTTLS 是 Opportunistic TLS：在已建立的明文連線上升級加密，與 SMTPS（port 465，TLS from start）不同。AUTH LOGIN 以 base64 傳輸憑證（非加密），因此必須在 TLS 通道建立後才能使用。',
+      fail:null,
+      interview:'STARTTLS vs SMTPS（Implicit TLS）：STARTTLS 可能因降級攻擊被繞過（STRIPTLS 攻擊），Implicit TLS（port 465）更安全因為 TLS 在任何明文命令前即建立。Google Gmail 強制要求 TLS，若伺服器不支援會拒絕連線。SPF、DKIM、DMARC 是郵件驗證三劍客，面試必知。',
+    },
+    {
+      id:'smtp-data', stageIdx:5,
+      title:'MAIL FROM / RCPT TO / DATA', titleEN:'Email Envelope + Data',
+      protocol:'SMTP', layer:'Application', packetType:'MAIL FROM',
+      badgeClass:'b-smtp', badgeText:'SMTP',
+      from:'browser', to:'webserver', pkt:'DATA', pktColor:'#C084FC',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SMTP', kpiLat:'~ 30ms', kpiStatus:'QUEUED',
+      what:'傳送郵件信封（Envelope）：MAIL FROM（寄件人）→ RCPT TO（收件人）→ DATA（郵件 Header + Body）。以單行 "." 結束 DATA 傳輸。',
+      details:[
+        {k:'C→S',v:'MAIL FROM:<sender@yourdomain.com>'},
+        {k:'S→C',v:'250 OK'},{k:'C→S',v:'RCPT TO:<user@'+domain+'>'},
+        {k:'S→C',v:'250 OK'},{k:'C→S',v:'DATA'},
+        {k:'C→S',v:'[Headers + Body + .]'},{k:'S→C',v:'250 Message queued',c:'c-success'},
+      ],
+      tech:'SMTP 信封（Envelope）的 MAIL FROM/RCPT TO 與郵件標頭的 From:/To: 可以不同——這是垃圾郵件偽造的核心機制。SPF 驗證 Envelope From 對應的 IP，DKIM 對郵件 Header+Body 做數位簽章。',
+      fail:null,
+      interview:'Envelope vs Header 的區別是郵件安全的核心概念。MAIL FROM 是「信封」寄件人（用於退信），From: 是郵件標頭（使用者看到的）。Phishing 攻擊常利用兩者不一致製造欺騙。DMARC policy 可以要求兩者的域名對齊，防止偽造。',
+    },
+    {
+      id:'smtp-done', stageIdx:6,
+      title:'郵件成功投遞', titleEN:'Email Delivered',
+      protocol:'SMTP', layer:'Application', packetType:'Delivered',
+      badgeClass:'b-smtp', badgeText:'SMTP',
+      from:'webserver', to:'render', pkt:'✓ OK', pktColor:'#45D483',
+      activeNodes:['webserver','render'], activeEdges:['e-ws'],
+      kpiProto:'SMTP', kpiLat:'~200ms', kpiStatus:'DELIVERED',
+      what:`郵件伺服器接受郵件並加入傳遞佇列（Queue）。Postfix 將郵件傳遞至收件人的信箱（${domain} MDA），收件人可透過 IMAP/POP3 讀取。`,
+      details:[
+        {k:'Status',v:'250 OK Message Accepted',c:'c-success'},
+        {k:'C→S',v:'QUIT'},{k:'S→C',v:'221 Bye'},
+        {k:'Queue ID',v:'3A8F2B0C45D2'},{k:'Delivered To',v:'user@'+domain},
+      ],
+      tech:'SMTP 交遞後郵件進入 MTA Queue，由 MTA 負責後續傳遞。若目標伺服器暫時不可達，MTA 會按指數退避（exponential backoff）重試，通常持續 5 天。',
+      fail:null,
+      interview:'SMTP 的 250 OK 只代表伺服器「接受了這封郵件」，不代表已送達收件人。後續 MTA 到 MTA 的傳遞可能失敗並產生 NDR（Non-Delivery Report）退信。郵件追蹤通常透過 Message-ID Header 和各 MTA 的 Received Header 鏈來分析路徑。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  return S;
+}
+
+// ─── IMAP STEPS BUILDER ────────────────────────────────
+function buildImapSteps(scenario, host) {
+  const domain = host.split('.').slice(-2).join('.');
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'連線至 IMAP 伺服器', titleEN:'IMAP Connection Setup',
+      protocol:'IMAP Client (MUA)', layer:'Application', packetType:'Addr Parse',
+      badgeClass:'b-imap', badgeText:'IMAP',
+      from:null, to:'browser', pkt:'IMAP', pktColor:'#2DD4BF',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'IMAP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`郵件客戶端準備連線至 IMAP 伺服器（${host}）。IMAP（port 993/IMAPS）是伺服器端同步協定，郵件保留在伺服器，支援多設備存取同一信箱。`,
+      details:[
+        {k:'Server',v:host},{k:'Port',v:'993 (IMAPS, TLS)'},
+        {k:'Protocol',v:'IMAP4rev2 (RFC 9051)'},
+        {k:'Mode',v:'Server-side sync (vs POP3 download)'},
+      ],
+      tech:'IMAP（Internet Message Access Protocol）讓郵件留在伺服器，客戶端只下載需要的部分。支援資料夾、旗標（已讀/未讀/重要）、伺服器端搜尋，非常適合多設備場景。',
+      fail:null,
+      interview:'IMAP vs POP3 是郵件協定最常見的面試題。IMAP 伺服器端同步、支援多設備、可只下載 Header；POP3 下載後刪除伺服器郵件（預設），適合單設備離線閱讀。現代郵件服務（Gmail、Outlook）全部使用 IMAP/Exchange ActiveSync。',
+    },
+    ...dnsStepsBuilder(host, false),
+    ...tcpStepsBuilder(993, scenario),
+    {
+      id:'imap-greeting', stageIdx:4,
+      title:'IMAP 伺服器問候', titleEN:'IMAP Server Greeting',
+      protocol:'IMAPS (port 993)', layer:'Application', packetType:'* OK Greeting',
+      badgeClass:'b-imap', badgeText:'IMAP',
+      from:'webserver', to:'browser', pkt:'* OK', pktColor:'#2DD4BF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'IMAP', kpiLat:'~ 5ms', kpiStatus:'READY',
+      what:'TLS 握手完成後，IMAP 伺服器傳送未標記回應「* OK IMAP4rev2 Ready」。此為伺服器主動問候，格式以「*」（untagged）開頭。',
+      details:[
+        {k:'S→C',v:'* OK Dovecot IMAP4rev2 ready'},
+        {k:'TLS',v:'1.3 (already established at port 993)'},
+        {k:'State',v:'Not Authenticated'},
+      ],
+      tech:'IMAP 回應格式：「TAG STATUS [CODE] Text」。未標記回應（untagged, *）是伺服器主動推送的狀態；標記回應（tagged）是客戶端命令的直接回覆，使用客戶端提供的標籤（A001, A002...）。',
+      fail:null,
+      interview:'IMAP 的標記系統讓多個命令可以 pipeline 發送而不需等待逐一回應（pipelining），提升效率。IDLE 命令（RFC 2177）讓伺服器在新郵件到達時主動通知客戶端，實現郵件推送，優於客戶端輪詢。',
+    },
+    {
+      id:'imap-login', stageIdx:4,
+      title:'IMAP LOGIN — 身份驗證', titleEN:'IMAP Authentication',
+      protocol:'IMAP', layer:'Application', packetType:'LOGIN',
+      badgeClass:'b-imap', badgeText:'IMAP',
+      from:'browser', to:'webserver', pkt:'LOGIN', pktColor:'#2DD4BF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'IMAP', kpiLat:'~ 20ms', kpiStatus:'AUTHENTICATED',
+      what:'客戶端傳送標記命令 LOGIN（或 AUTHENTICATE PLAIN/OAUTH2），伺服器驗證憑證後回 OK，進入 Authenticated 狀態。',
+      details:[
+        {k:'C→S',v:'A001 LOGIN user@'+domain+' ****'},
+        {k:'S→C',v:'A001 OK [CAPABILITY IMAP4rev2] Logged in',c:'c-success'},
+        {k:'State',v:'Authenticated → can SELECT mailbox'},
+      ],
+      tech:'IMAP 支援多種 SASL 認證機制：LOGIN（明文，需 TLS）、PLAIN、CRAM-MD5、XOAUTH2（Google/Microsoft OAuth 授權）。現代服務趨向 OAuth2，避免儲存用戶密碼。',
+      fail:null,
+      interview:'Google 在 2022 年停止 Gmail 的 IMAP basic auth 支援，強制要求 OAuth2（App Password 或 OAuth token）。這是「Less Secure Apps」政策的一部分。OAuth2 for IMAP/SMTP 讓第三方應用不需要知道用戶密碼，符合最小權限原則。',
+    },
+    {
+      id:'imap-select', stageIdx:5,
+      title:'SELECT INBOX — 開啟信箱', titleEN:'IMAP SELECT Mailbox',
+      protocol:'IMAP', layer:'Application', packetType:'SELECT',
+      badgeClass:'b-imap', badgeText:'IMAP',
+      from:'browser', to:'webserver', pkt:'SELECT', pktColor:'#2DD4BF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'IMAP', kpiLat:'~ 15ms', kpiStatus:'SELECTED',
+      what:'客戶端傳送 SELECT INBOX，伺服器回傳信箱統計資訊（郵件數量、未讀數、最新 UID）。進入 Selected 狀態，可對郵件執行 FETCH/STORE/SEARCH 等操作。',
+      details:[
+        {k:'C→S',v:'A002 SELECT INBOX'},
+        {k:'S→C',v:'* 42 EXISTS (total messages)'},
+        {k:'S→C',v:'* 3 RECENT (new messages)'},
+        {k:'S→C',v:'A002 OK [READ-WRITE] SELECT completed',c:'c-success'},
+      ],
+      tech:'IMAP 信箱狀態：EXISTS（郵件總數）、RECENT（此會話新增）、UNSEEN（未讀數）、UIDVALIDITY（UID 有效性，用於快取校驗）。EXAMINE 命令與 SELECT 相同但為唯讀模式。',
+      fail:null,
+      interview:'IMAP UIDVALIDITY 是快取一致性的關鍵：若 UIDVALIDITY 改變，客戶端必須清除快取重新同步。這在郵件遷移（如 Server 重建）後很重要。CONDSTORE/QRESYNC（RFC 7162）擴充讓客戶端可以增量同步，避免每次全量下載。',
+    },
+    {
+      id:'imap-fetch', stageIdx:5,
+      title:'FETCH — 取得郵件內容', titleEN:'IMAP FETCH Messages',
+      protocol:'IMAP', layer:'Application', packetType:'FETCH',
+      badgeClass:'b-imap', badgeText:'IMAP',
+      from:'webserver', to:'browser', pkt:'FETCH', pktColor:'#2DD4BF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'IMAP', kpiLat:'~100ms', kpiStatus:'FETCHING',
+      what:'客戶端傳送 FETCH 命令請求郵件 Header 或 Body。IMAP 可以只下載 Header（快速列表），再按需下載完整 Body（節省頻寬）。',
+      details:[
+        {k:'C→S',v:'A003 FETCH 1:10 (RFC822.HEADER)'},
+        {k:'S→C',v:'* 1 FETCH (RFC822.HEADER {512})'},
+        {k:'S→C',v:'[Subject/From/Date headers...]'},
+        {k:'S→C',v:'A003 OK FETCH completed',c:'c-success'},
+      ],
+      tech:'IMAP FETCH 可以精細指定要取得的資料：ENVELOPE（摘要）、RFC822.HEADER（標頭）、RFC822.TEXT（正文）、BODY[1]（MIME part 1）、RFC822（完整郵件）。節省頻寬是 IMAP 對比 POP3 的核心優勢。',
+      fail:null,
+      interview:'IMAP BODY[PEEK][] 讓客戶端取得郵件而不自動設定 \\Seen 旗標（已讀），保留閱讀狀態控制給使用者。IMAP SEARCH 命令讓伺服器端執行搜索，節省客戶端下載所有郵件的開銷，是企業郵件系統效能的關鍵。',
+    },
+    {
+      id:'imap-done', stageIdx:6,
+      title:'郵件同步完成 — LOGOUT', titleEN:'IMAP Sync Complete',
+      protocol:'IMAP', layer:'Application', packetType:'LOGOUT',
+      badgeClass:'b-imap', badgeText:'IMAP',
+      from:'browser', to:'render', pkt:'Synced', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'IMAP', kpiLat:'~200ms', kpiStatus:'SYNCED',
+      what:'郵件成功同步至本機郵件客戶端。客戶端可傳送 LOGOUT 關閉連線，或保持 IDLE 狀態等待伺服器推送新郵件通知。',
+      details:[
+        {k:'C→S',v:'A004 LOGOUT'},{k:'S→C',v:'* BYE IMAP4 Logging out'},
+        {k:'S→C',v:'A004 OK Logout completed'},
+        {k:'Synced',v:'42 messages, 3 unread',c:'c-success'},
+      ],
+      tech:'IMAP IDLE（RFC 2177）允許客戶端持續保持連線並等待伺服器主動推送通知（新郵件、旗標變更等），比輪詢（polling）更即時且節省頻寬。行動裝置推播通知通常基於 IMAP IDLE 實作。',
+      fail:null,
+      interview:'IMAP 的 IDLE 命令是郵件推送的底層機制。為何我們說「push email」但底層仍是 IMAP IDLE TCP 持久連線？因為行動平台（iOS/Android）使用作業系統層級的推播（APNs/FCM），郵件伺服器先用 IMAP IDLE 等待，再透過推播喚醒 App，節省行動裝置電池。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  return S;
+}
+
+// ─── POP3 STEPS BUILDER ────────────────────────────────
+function buildPop3Steps(scenario, host) {
+  const domain = host.split('.').slice(-2).join('.');
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'連線至 POP3 伺服器', titleEN:'POP3 Connection Setup',
+      protocol:'POP3 Client (MUA)', layer:'Application', packetType:'Addr Parse',
+      badgeClass:'b-pop3', badgeText:'POP3',
+      from:null, to:'browser', pkt:'POP3', pktColor:'#FB7185',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'POP3', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`郵件客戶端準備連線至 POP3 伺服器（${host}，port 995/POP3S）。POP3 是下載式協定，郵件下載後預設從伺服器刪除，適合單設備離線閱讀。`,
+      details:[
+        {k:'Server',v:host},{k:'Port',v:'995 (POP3S, TLS)'},
+        {k:'Protocol',v:'POP3 (RFC 1939)'},
+        {k:'Behavior',v:'Download & delete (default)'},
+      ],
+      tech:'POP3（Post Office Protocol v3）設計簡單：連線 → 認證 → 下載 → 刪除 → 斷線。只有 12 個命令，無資料夾概念，無伺服器端搜索，無多設備同步。',
+      fail:null,
+      interview:'POP3 的優點：簡單、低伺服器儲存需求、支援離線閱讀（完整下載後斷線）。缺點：不支援多設備同步（第二台設備看不到已下載郵件）、無資料夾同步、難以搜索。現代應用幾乎全面採用 IMAP，POP3 主要用於遺留系統或嚴格的離線需求場景。',
+    },
+    ...dnsStepsBuilder(host, false),
+    ...tcpStepsBuilder(995, scenario),
+    {
+      id:'pop3-greeting', stageIdx:4,
+      title:'POP3 +OK 問候', titleEN:'POP3 Server Greeting',
+      protocol:'POP3S (port 995)', layer:'Application', packetType:'+OK Greeting',
+      badgeClass:'b-pop3', badgeText:'POP3',
+      from:'webserver', to:'browser', pkt:'+OK', pktColor:'#FB7185',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'POP3', kpiLat:'~ 5ms', kpiStatus:'READY',
+      what:'TLS 握手完成後，POP3 伺服器傳送 +OK 問候訊息，並附上時間戳（用於 APOP 認證）。進入 AUTHORIZATION 狀態。',
+      details:[
+        {k:'S→C',v:'+OK Dovecot POP3 ready <timestamp@'+host+'>'},
+        {k:'State',v:'AUTHORIZATION'},
+        {k:'TLS',v:'1.3 (TLS from start at port 995)'},
+      ],
+      tech:'POP3 只有兩種回應：+OK（成功）和 -ERR（失敗），比 IMAP 的數字回應碼更簡單。時間戳可用於 APOP 命令（MD5 challenge-response 認證），避免密碼明文傳輸，但現代已不推薦。',
+      fail:null,
+      interview:'POP3S（port 995）與 STARTTLS POP3（port 110）：POP3S 使用 Implicit TLS，連線一建立就加密；STARTTLS 先明文再升級。由於 port 110 的降級攻擊風險，建議使用 POP3S（port 995）。',
+    },
+    {
+      id:'pop3-auth', stageIdx:4,
+      title:'POP3 USER/PASS 認證', titleEN:'POP3 Authentication',
+      protocol:'POP3', layer:'Application', packetType:'USER / PASS',
+      badgeClass:'b-pop3', badgeText:'POP3',
+      from:'browser', to:'webserver', pkt:'USER/PASS', pktColor:'#FB7185',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'POP3', kpiLat:'~ 15ms', kpiStatus:'AUTHENTICATED',
+      what:'傳送 USER（用戶名）和 PASS（密碼）命令進行認證。伺服器驗證成功後回 +OK，進入 TRANSACTION 狀態，可執行郵件操作。',
+      details:[
+        {k:'C→S',v:'USER user@'+domain},
+        {k:'S→C',v:'+OK'},{k:'C→S',v:'PASS ****'},
+        {k:'S→C',v:'+OK Logged in',c:'c-success'},
+        {k:'State',v:'TRANSACTION'},
+      ],
+      tech:'POP3 認證後進入 TRANSACTION 狀態，在 QUIT 前所有 DELE 操作只是標記刪除，QUIT 時才執行。若連線中斷（未 QUIT），DELE 標記清除，郵件不會被刪除——這是設計上的可靠性考量。',
+      fail:null,
+      interview:'POP3 LOCK 機制：同一時間只允許一個 POP3 客戶端存取信箱（信箱鎖定）。這防止了多設備同時操作的競態條件，但也意味著第二台設備無法同時存取，這是 POP3 不適合多設備的根本原因之一。',
+    },
+    {
+      id:'pop3-stat', stageIdx:5,
+      title:'STAT — 查詢信箱狀態', titleEN:'POP3 STAT — Mailbox Info',
+      protocol:'POP3', layer:'Application', packetType:'STAT',
+      badgeClass:'b-pop3', badgeText:'POP3',
+      from:'browser', to:'webserver', pkt:'STAT', pktColor:'#FB7185',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'POP3', kpiLat:'~ 10ms', kpiStatus:'OK',
+      what:'客戶端傳送 STAT 命令查詢信箱概況（郵件數量與總大小）。再傳送 LIST 取得每封郵件的序號與大小，決定下載順序。',
+      details:[
+        {k:'C→S',v:'STAT'},{k:'S→C',v:'+OK 10 52345 (10 msgs, 52345 bytes)'},
+        {k:'C→S',v:'LIST'},{k:'S→C',v:'+OK 10 messages:'},
+        {k:'S→C',v:'1 4823\r\n2 6204\r\n...',},
+      ],
+      tech:'UIDL（Unique ID Listing）命令讓 POP3 也能實現有限的「不重複下載」：客戶端記錄已下載郵件的 UID，下次連線只下載新 UID 的郵件。這是 POP3 唯一的狀態追蹤機制。',
+      fail:null,
+      interview:'POP3 UIDL 命令（RFC 1939 optional）允許客戶端為郵件指定持久 UID，實現「只下載新郵件」功能。這需要客戶端自行維護已下載 UID 列表，而非伺服器端管理。Thunderbird 等郵件客戶端用此方式讓 POP3 也能「保留伺服器備份」（設置不刪除郵件 + UIDL 追蹤）。',
+    },
+    {
+      id:'pop3-retr', stageIdx:6,
+      title:'RETR — 下載郵件並完成', titleEN:'POP3 RETR & Complete',
+      protocol:'POP3', layer:'Application', packetType:'RETR / DELE',
+      badgeClass:'b-pop3', badgeText:'POP3',
+      from:'browser', to:'render', pkt:'Mail', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'POP3', kpiLat:'~200ms', kpiStatus:'DOWNLOADED',
+      what:'客戶端傳送 RETR <msgnum> 下載郵件完整內容。下載後傳送 DELE <msgnum> 標記刪除（在伺服器端）。最後 QUIT 結束會話，伺服器執行刪除並釋放信箱鎖。',
+      details:[
+        {k:'C→S',v:'RETR 1'},{k:'S→C',v:'+OK [message content]'},
+        {k:'C→S',v:'DELE 1'},{k:'S→C',v:'+OK Message deleted'},
+        {k:'C→S',v:'QUIT'},{k:'S→C',v:'+OK Bye',c:'c-success'},
+      ],
+      tech:'POP3 QUIT 是事務的提交點：DELE 標記只在 QUIT 成功後才真正執行。RSET 命令可以清除所有 DELE 標記（回滾）。若連線異常中斷，所有 DELE 自動回滾，郵件不會意外遺失。',
+      fail:null,
+      interview:'POP3 的事務模型（QUIT = commit，斷線 = rollback）讓它在不可靠網路下也能保持郵件完整性。現代 POP3 使用場景：1）企業合規需要本機儲存的場景；2）遺留系統整合；3）郵件備份腳本（搭配 UIDL 不刪除模式）。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  return S;
+}
+
+// ─── SNMP STEPS BUILDER ────────────────────────────────
+function buildSnmpSteps(scenario, host) {
+  const domain = host.split('.').slice(-2).join('.');
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'設定 SNMP 查詢目標', titleEN:'SNMP Target Configuration',
+      protocol:'SNMP Manager', layer:'Application', packetType:'Target Parse',
+      badgeClass:'b-snmp', badgeText:'SNMP',
+      from:null, to:'browser', pkt:'OID', pktColor:'#818CF8',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'SNMP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`SNMP Manager（網路管理站）設定查詢目標（${host}）、Community String（讀取密碼）與 OID（物件識別碼）。SNMP 使用 UDP port 161，輕量無連線特性適合大規模網路設備監控。`,
+      details:[
+        {k:'Target',v:host},{k:'Port',v:'161/UDP'},
+        {k:'Version',v:'SNMPv3 (auth + priv)'},{k:'OID',v:'1.3.6.1.2.1.1.3.0 (sysUpTime)'},
+        {k:'Community',v:'N/A (SNMPv3 uses USM)'},
+      ],
+      tech:'SNMP 三個版本：v1/v2c 使用 Community String（明文密碼，極不安全）；SNMPv3 支援 USM（User-based Security Model）提供認證（MD5/SHA）與加密（DES/AES）。',
+      fail:null,
+      interview:'SNMP Community String 是 v1/v2c 的重大安全弱點：明文傳輸且默認值（"public"/"private"）幾乎到處都是。CVE 中有大量 SNMP Community String 洩漏導致的網路設備被控事件。SNMPv3 的 authPriv 模式（認證+加密）是現代網路管理的最低安全標準。',
+    },
+    ...dnsStepsBuilder(host, false),
+    {
+      id:'snmp-get', stageIdx:3,
+      title:'SNMP GetRequest — UDP 查詢', titleEN:'SNMP GetRequest (UDP)',
+      protocol:'SNMP v3 (UDP/161)', layer:'Application', packetType:'GetRequest PDU',
+      badgeClass:'b-snmp', badgeText:'SNMP',
+      from:'browser', to:'webserver', pkt:'GET', pktColor:'#818CF8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SNMP/UDP', kpiLat:'< 5ms', kpiStatus:'GET-REQ',
+      what:`SNMP Manager 向網路設備（${host}:161）傳送 UDP GetRequest PDU。SNMP 直接使用 UDP，無需 TCP 三向交握，查詢單一 OID（sysUpTime）。`,
+      details:[
+        {k:'Protocol',v:'UDP (connectionless)'},{k:'Dst',v:host+':161'},
+        {k:'PDU Type',v:'GetRequest (0x00)'},{k:'OID',v:'1.3.6.1.2.1.1.3.0'},
+        {k:'RequestID',v:'12345'},{k:'No TCP',v:'UDP — no handshake needed'},
+      ],
+      tech:'SNMP 使用 UDP 而非 TCP：網路管理場景需要輕量、低開銷的協定。UDP 允許同時向大量設備廣播查詢而不需逐一建立 TCP 連線。但 UDP 無可靠性保證，SNMP Manager 需自行處理重傳。',
+      fail:null,
+      interview:'SNMP 使用 UDP 是個有趣的設計選擇——在網路故障診斷場景中，可靠傳輸協定（TCP）可能因為網路問題本身而無法建立連線，而 UDP 的無連線特性反而能在半連通環境中工作。這與 DNS 選擇 UDP 的邏輯相似。',
+    },
+    {
+      id:'snmp-response', stageIdx:4,
+      title:'GetResponse — 設備回傳數據', titleEN:'SNMP GetResponse',
+      protocol:'SNMP v3 (UDP/161)', layer:'Application', packetType:'GetResponse PDU',
+      badgeClass:'b-snmp', badgeText:'SNMP',
+      from:'webserver', to:'browser', pkt:'RESP', pktColor:'#818CF8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SNMP/UDP', kpiLat:'~ 10ms', kpiStatus:'RESPONSE',
+      what:`網路設備（SNMP Agent）回傳 GetResponse PDU，包含對應 OID 的當前值（如 sysUpTime = 1234567 TimeTicks ≈ 3.4 天）。`,
+      details:[
+        {k:'PDU Type',v:'GetResponse (0x02)'},{k:'RequestID',v:'12345 (matched)'},
+        {k:'OID',v:'1.3.6.1.2.1.1.3.0'},{k:'Value',v:'1234567 (TimeTicks)',c:'c-success'},
+        {k:'Error Status',v:'0 (noError)'},{k:'RTT',v:'~8ms'},
+      ],
+      tech:'SNMP OID（Object Identifier）是 MIB（Management Information Base）中的物件路徑。標準 MIB-II（1.3.6.1.2.1）包含系統資訊、網路介面統計、IP/TCP/UDP 計數器等通用指標；廠商可擴充私有 OID（1.3.6.1.4.1）。',
+      fail:null,
+      interview:'SNMP Trap（vs GetRequest）：一般 SNMP 是 Manager 主動輪詢（Poll）；SNMP Trap 是 Agent 主動推送告警（如連結中斷、高 CPU）到 Manager。現代監控系統（Zabbix、Nagios、Prometheus）通常結合 SNMP polling + Trap 實現全面監控。',
+    },
+    {
+      id:'snmp-mib', stageIdx:5,
+      title:'MIB 解析 — 翻譯 OID 數值', titleEN:'MIB Parsing & Translation',
+      protocol:'SNMP Manager (Local)', layer:'Application', packetType:'MIB Parse',
+      badgeClass:'b-snmp', badgeText:'SNMP',
+      from:'browser', to:'browser', pkt:'MIB', pktColor:'#818CF8',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'SNMP', kpiLat:'< 1ms', kpiStatus:'PARSED',
+      what:'SNMP Manager 在本機使用 MIB 文件將 OID 數值翻譯成可讀名稱和單位。例如：1.3.6.1.2.1.1.3.0 = sysUpTime，值 1234567 TimeTicks = 3.43 天。',
+      details:[
+        {k:'OID',v:'1.3.6.1.2.1.1.3.0'},{k:'MIB Name',v:'sysUpTime'},
+        {k:'Raw Value',v:'1234567 TimeTicks'},{k:'Translated',v:'3 days 14:16:56.7',c:'c-accent'},
+        {k:'MIB File',v:'RFC1213-MIB.txt'},
+      ],
+      tech:'MIB（Management Information Base）是描述可管理物件的資料庫定義文件（ASN.1 格式）。沒有 MIB，SNMP 回應只是數字；有了 MIB，才能翻譯為有意義的名稱與單位。廠商設備通常提供私有 MIB 文件供下載。',
+      fail:null,
+      interview:'SNMP 的可擴展性來自 MIB：設備廠商可定義自己的 OID 命名空間（Enterprise OID 1.3.6.1.4.1.<vendor_id>）。Cisco（9）、Juniper（2636）、HP（11）等大廠都有巨大的私有 MIB 樹。MIB Browser（如 iReasoning MIB Browser）是網路工程師的必備工具。',
+    },
+    {
+      id:'snmp-done', stageIdx:6,
+      title:'監控數據展示完成', titleEN:'SNMP Data Displayed',
+      protocol:'SNMP Manager', layer:'Application', packetType:'Display',
+      badgeClass:'b-snmp', badgeText:'SNMP',
+      from:'browser', to:'render', pkt:'Graph', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'SNMP', kpiLat:'~15ms', kpiStatus:'COMPLETE',
+      what:'解析後的監控數據傳遞至管理儀表板（NMS/Grafana）顯示。在真實環境中，監控系統每隔 60–300 秒重複此 GetRequest 週期，持續收集設備指標。',
+      details:[
+        {k:'sysUpTime',v:'3 days 14:16:56',c:'c-success'},
+        {k:'ifInOctets',v:'12,345,678 bytes/s'},
+        {k:'cpuUsage',v:'23%'},{k:'Poll Interval',v:'every 60s'},
+      ],
+      tech:'SNMP Polling 的週期選擇是精度與負載的取捨：短週期（30s）提供高精度趨勢但增加設備 CPU 負擔；長週期（300s）省資源但可能錯過短暫峰值。現代監控趨向 gRPC/gNMI（gRPC Network Management Interface）替代 SNMP，支援 push-based streaming。',
+      fail:null,
+      interview:'SNMP 的繼任者：NETCONF（RFC 6241，XML over SSH）和 RESTCONF（HTTP + JSON/XML）是 IETF 標準化的現代網路管理協定，支援事務式配置（all-or-nothing）。gNMI（gRPC Network Management Interface）是 Google 主導的現代監控標準，支援 Streaming Telemetry（持續推播指標），Junos/IOS-XR/NX-OS 都已支援。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='dns-fail'){ const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  return S;
+}
+
 // ─── STEP DEFINITIONS ──────────────────────────────────
-function buildSteps(scenario, host, isHttps) {
+function buildSteps(scenario, host, protocol) {
+  if(protocol==='ftp')  return buildFtpSteps(scenario, host);
+  if(protocol==='smtp') return buildSmtpSteps(scenario, host);
+  if(protocol==='imap') return buildImapSteps(scenario, host);
+  if(protocol==='pop3') return buildPop3Steps(scenario, host);
+  if(protocol==='snmp') return buildSnmpSteps(scenario, host);
+
+  const isHttps = protocol==='https';
   const port = isHttps ? 443 : 80;
   const proto = isHttps ? 'HTTPS (HTTP/1.1)' : 'HTTP/1.1';
   const tld = host.split('.').pop();
@@ -815,7 +1593,7 @@ function buildSteps(scenario, host, isHttps) {
 // ═══════════════════════════════════════════════════════
 const state = {
   steps:[], idx:-1, playing:false, playTimer:null, animRAF:null,
-  speed:1, scenario:'normal', host:'example.com', isHttps:true,
+  speed:1, scenario:'normal', host:'example.com', protocol:'https',
   pktCount:0, started:false,
 };
 
@@ -1048,7 +1826,7 @@ function updateStageTabs() {
   const row = document.getElementById('stageRow');
   row.innerHTML='';
   const cur = state.steps[state.idx];
-  STAGES.forEach((name,i)=>{
+  getStages(state.protocol||'https').forEach((name,i)=>{
     const chip=document.createElement('div');
     chip.className='stage-chip';
     chip.textContent=name;
@@ -1068,7 +1846,7 @@ function updateLeftSidebar() {
   document.getElementById('scHost').textContent = state.host || '—';
   const scNames = {normal:'Normal Flow',  'dns-fail':'DNS Fail', 'tcp-timeout':'TCP Timeout', 'server-slow':'Slow Server'};
   document.getElementById('scScenario').textContent = scNames[state.scenario] || '—';
-  document.getElementById('scProtocol').textContent = state.isHttps ? 'HTTPS' : 'HTTP';
+  document.getElementById('scProtocol').textContent = (state.protocol||'https').toUpperCase();
   document.getElementById('scSteps').textContent = state.started ? `${Math.max(state.idx+1,0)} / ${state.steps.length}` : '—';
   const scDot = document.getElementById('scDot');
   const scName = document.getElementById('scName');
@@ -1082,7 +1860,7 @@ function updateLeftSidebar() {
   // Journey list
   const list = document.getElementById('journeyList');
   list.innerHTML='';
-  const stageItems = STAGES.map((name,i)=>({name,idx:i}));
+  const stageItems = getStages(state.protocol||'https').map((name,i)=>({name,idx:i}));
   stageItems.forEach(({name,idx:si},arrIdx)=>{
     const isLast = arrIdx===stageItems.length-1;
     let dotState='idle', nameClass='';
@@ -1127,7 +1905,7 @@ function setKpi(id, val, cls){
 }
 
 // ─── Right panel ───────────────────────────────────────
-const BADGE_MAP = {'b-dns':'DNS','b-tcp':'TCP','b-http':'HTTP/HTTPS','b-render':'RENDER','b-internal':'INTERNAL','b-error':'ERROR'};
+const BADGE_MAP = {'b-dns':'DNS','b-tcp':'TCP','b-http':'HTTP/HTTPS','b-render':'RENDER','b-internal':'INTERNAL','b-error':'ERROR','b-ftp':'FTP','b-smtp':'SMTP','b-imap':'IMAP','b-pop3':'POP3','b-snmp':'SNMP'};
 function updateRightPanel() {
   const step = state.steps[state.idx];
   const body = document.getElementById('rpBody');
@@ -1310,12 +2088,20 @@ function stopPlayback(){
 // ─── Overlays ──────────────────────────────────────────
 function showDoneOverlay(){
   document.getElementById('doneOverlay').classList.add('on');
-  document.getElementById('doneDesc').textContent=
-    `從 URL 輸入到頁面渲染，共完成 ${state.steps.length} 個步驟，涵蓋 DNS、TCP、HTTP 三大協定。`;
+  const protoDesc = {
+    https:'從 URL 輸入到頁面渲染，完整走過 DNS、TCP、HTTPS 全流程。',
+    http:'從 URL 輸入到頁面渲染，完整走過 DNS、TCP、HTTP 全流程。',
+    ftp:'FTP 檔案傳輸完成，涵蓋 DNS、TCP 三向交握、雙通道資料傳輸。',
+    smtp:'郵件成功提交至 SMTP 伺服器，涵蓋 DNS MX 查詢、TCP、STARTTLS 加密認證。',
+    imap:'IMAP 郵件同步完成，涵蓋 DNS、TCP、IMAPS 認證與信箱操作。',
+    pop3:'POP3 郵件下載完成，涵蓋 DNS、TCP、POP3S 認證與郵件下載。',
+    snmp:'SNMP 監控查詢完成，涵蓋 DNS、UDP GetRequest、MIB 解析。',
+  };
+  document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
     <div class="done-stat"><div class="dsv">${state.steps.length}</div><div class="dsl">Steps</div></div>
-    <div class="done-stat"><div class="dsv">3</div><div class="dsl">Protocols</div></div>
-    <div class="done-stat"><div class="dsv">~350ms</div><div class="dsl">Total Time</div></div>
+    <div class="done-stat"><div class="dsv">${(state.protocol||'https').toUpperCase()}</div><div class="dsl">Protocol</div></div>
+    <div class="done-stat"><div class="dsv">${state.host}</div><div class="dsl">Target</div></div>
   `;
 }
 function showFailOverlay(step){
@@ -1339,10 +2125,30 @@ function replaySim(){
 // ─── Init / Reset ──────────────────────────────────────
 function initSim() {
   const raw = document.getElementById('urlInput').value.trim();
-  let parsed;
-  try {
-    parsed = new URL(raw.includes('://')?raw:'https://'+raw);
-  } catch(e) {
+  const manualProto = document.getElementById('protocolSel').value;
+
+  // Detect protocol
+  let protocol;
+  if(manualProto !== 'auto') {
+    protocol = manualProto;
+  } else {
+    if(/^ftp:\/\//i.test(raw))         protocol = 'ftp';
+    else if(/^smtp:\/\//i.test(raw))   protocol = 'smtp';
+    else if(/^imap:\/\//i.test(raw))   protocol = 'imap';
+    else if(/^pop3?:\/\//i.test(raw))  protocol = 'pop3';
+    else if(/^snmp:\/\//i.test(raw))   protocol = 'snmp';
+    else if(/^http:\/\//i.test(raw))   protocol = 'http';
+    else                               protocol = 'https';
+  }
+
+  // Extract hostname robustly (handles non-standard schemes)
+  let host = raw;
+  if(host.includes('://')) host = host.split('://')[1];
+  host = host.split('/')[0].split(':')[0];
+  if(host.includes('@')) host = host.split('@').pop();
+  host = host.trim();
+
+  if(!host || host.length < 2) {
     const w=document.getElementById('urlWrap');
     w.classList.add('shake');
     setTimeout(()=>w.classList.remove('shake'),400);
@@ -1354,10 +2160,10 @@ function initSim() {
   document.getElementById('doneOverlay').classList.remove('on');
   document.getElementById('failOverlay').classList.remove('on');
 
-  state.host=parsed.hostname;
-  state.isHttps=parsed.protocol==='https:';
+  state.host=host;
+  state.protocol=protocol;
   state.scenario=document.getElementById('scenarioSel').value;
-  state.steps=buildSteps(state.scenario,state.host,state.isHttps);
+  state.steps=buildSteps(state.scenario,state.host,state.protocol);
   state.idx=-1; state.pktCount=0; state.started=true;
 
   resetAllVisuals();
@@ -1453,22 +2259,15 @@ document.addEventListener('keydown',e=>{
 // ═══════════════════════════════════════════════════════
 drawTopology();
 
-// Init stage tabs
-(function(){
-  const row=document.getElementById('stageRow');
-  STAGES.forEach(name=>{
-    const chip=document.createElement('div');
-    chip.className='stage-chip';
-    chip.textContent=name;
-    row.appendChild(chip);
-  });
-})();
+// Init stage tabs (dynamic based on default protocol)
+updateStageTabs();
 
-// Init journey list
+// Init journey list (dynamic)
 (function(){
   const list=document.getElementById('journeyList');
-  STAGES.forEach((name,i)=>{
-    const isLast=i===STAGES.length-1;
+  const stages=getStages('https');
+  stages.forEach((name,i)=>{
+    const isLast=i===stages.length-1;
     const item=document.createElement('div');
     item.className='j-item';
     item.innerHTML=`
@@ -1480,6 +2279,17 @@ drawTopology();
     list.appendChild(item);
   });
 })();
+
+// Update placeholder based on protocol selector
+document.getElementById('protocolSel').addEventListener('change', function() {
+  const phMap = {
+    auto:'https://example.com', https:'https://example.com', http:'http://example.com',
+    ftp:'ftp://ftp.example.com', smtp:'smtp://mail.example.com',
+    imap:'imap://mail.example.com', pop3:'pop3://mail.example.com',
+    snmp:'snmp://192.168.1.1',
+  };
+  document.getElementById('urlInput').placeholder = phMap[this.value] || 'https://example.com';
+});
 
 // Keyboard shortcut hint
 console.log('%c⚡ Packet Journey Simulator','color:#3DD9C5;font-size:14px;font-weight:bold');
