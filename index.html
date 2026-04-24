@@ -400,12 +400,21 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
       </select>
     </div>
     <div class="scenario-group">
+      <label>DNS</label>
+      <select class="sel" id="dnsModeSel">
+        <option value="compact" selected>🔹 Compact</option>
+        <option value="detailed">🔍 Detailed</option>
+        <option value="cached">⚡ Cached</option>
+      </select>
+    </div>
+    <div class="scenario-group">
       <label>Scenario</label>
       <select class="sel" id="scenarioSel">
         <option value="normal">✅ Normal</option>
         <option value="dns-fail">❌ DNS Fail</option>
         <option value="tcp-timeout">⏱ TCP Timeout</option>
         <option value="server-slow">🐌 Slow Server</option>
+        <option value="auth-fail">🔐 Auth Fail</option>
       </select>
     </div>
     <button class="btn btn-ghost" id="themeBtn" title="Toggle theme">🌙</button>
@@ -552,6 +561,28 @@ const NODES = [
   { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:916, cy:170, tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
 ];
 
+const PROTOCOL_LABELS = {
+  https:    { browser:['Browser','CLIENT'],       webserver:['Web Server','ORIGIN'],      render:['Browser Render','RENDERER'] },
+  http:     { browser:['Browser','CLIENT'],       webserver:['Web Server','ORIGIN'],      render:['Browser Render','RENDERER'] },
+  ftp:      { browser:['FTP Client','CLIENT'],    webserver:['FTP Server','vsftpd'],      render:['Local Filesystem','STORAGE'] },
+  smtp:     { browser:['MUA','Mail User Agent'],  webserver:['MTA (Submission)','SMTP/587'],render:['Recipient Inbox','MDA'] },
+  imap:     { browser:['Mail Client','MUA'],      webserver:['IMAP Server','993/TLS'],    render:['Local Mailbox Cache','CACHE'] },
+  pop3:     { browser:['Mail Client','MUA'],      webserver:['POP3 Server','995/TLS'],    render:['Local Mailbox','STORE'] },
+  snmp:     { browser:['SNMP Manager','NMS'],     webserver:['SNMP Agent','Device'],      render:['MIB Parser','Data'] },
+};
+
+function updateNodeLabels(protocol){
+  const map = PROTOCOL_LABELS[protocol] || PROTOCOL_LABELS.https;
+  ['browser','webserver','render'].forEach(id=>{
+    const pair = map[id];
+    if(!pair) return;
+    const lbl = document.getElementById('nlbl-'+id);
+    const typ = document.getElementById('ntyp-'+id);
+    if(lbl) lbl.textContent = pair[0];
+    if(typ) typ.textContent = pair[1];
+  });
+}
+
 const EDGES_DEF = [
   { id:'e-br',   from:'browser',   to:'resolver',  style:'solid',  curved:false },
   { id:'e-rr',   from:'resolver',  to:'recursive', style:'solid',  curved:false },
@@ -576,9 +607,77 @@ const TOOLTIP_DATA = {};
 NODES.forEach(n=>TOOLTIP_DATA[n.id]=n.tt);
 
 // ─── SHARED DNS STEPS BUILDER ──────────────────────────
-function dnsStepsBuilder(host, isMX) {
+function dnsStepsBuilder(host, isMX, mode) {
+  mode = mode || 'detailed';
   const tld = host.split('.').pop();
   const domain = host.split('.').slice(-2).join('.');
+
+  if (mode === 'cached') {
+    return [{
+      id:'dns-cache-hit', stageIdx:1,
+      title: isMX?'DNS MX 快取命中':'DNS 快取命中', titleEN: isMX?'DNS MX Cache Hit':'DNS Cache Hit',
+      protocol:'DNS / Local Cache', layer:'Application', packetType:'Cache Hit',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'browser', to:'resolver', pkt:'HIT', pktColor:'#45D483',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DNS', kpiLat:'< 1ms', kpiStatus:'HIT',
+      what: isMX
+        ?`本機快取命中，直接取得 ${domain} 的 MX 記錄（mail.${domain} → 198.51.100.5），略過完整 DNS 遞回查詢。`
+        :`本機快取命中（Browser / OS / Router 其中一層），直接取得 ${host} 的 IP（93.184.216.34），無需公開 DNS 查詢。`,
+      details: isMX
+        ?[{k:'Query',v:domain+' MX'},{k:'Source',v:'OS Cache'},{k:'MX',v:'mail.'+domain},{k:'IP',v:'198.51.100.5',c:'c-success'},{k:'TTL Remain',v:'~ 1800s'}]
+        :[{k:'Query',v:host+' A'},{k:'Source',v:'OS Cache'},{k:'IP',v:'93.184.216.34',c:'c-success'},{k:'TTL Remain',v:'~ 1800s'}],
+      tech:'OS Resolver 快取 / SNMP 內網環境常以 /etc/hosts 或內部 DNS 解析，大部分查詢直接在本機命中，延遲 < 1ms。',
+      fail:null,
+      interview:'實際使用中，多數 DNS 查詢命中本機快取。TTL 控制快取生命週期，`dns-prefetch` 與 HTTP/2 Connection Coalescing 都依賴快取命中以降低 TTFB。',
+    }];
+  }
+
+  if (mode === 'compact') {
+    return [
+      {
+        id:'dns-query', stageIdx:1,
+        title: isMX?'DNS MX 查詢':'DNS 查詢', titleEN: isMX?'DNS MX Query':'DNS Query',
+        protocol:'DNS over UDP (port 53)', layer:'Application', packetType: isMX?'MX Query':'A Query',
+        badgeClass:'b-dns', badgeText:'DNS',
+        from:'browser', to:'recursive', pkt: isMX?'MX?':'A?', pktColor:'#3DD9C5',
+        activeNodes:['browser','resolver','recursive'], activeEdges:['e-br','e-rr'],
+        kpiProto:'DNS/UDP', kpiLat:'~ 10ms', kpiStatus:'QUERY',
+        what: isMX
+          ?`查詢 ${domain} 的 MX 記錄。Recursive Resolver 代為迭代查詢 Root → TLD → Auth，客戶端只看到一次往返。`
+          :`查詢 ${host} 的 A 記錄。Recursive Resolver 代為迭代查詢 Root → TLD → Auth，客戶端只看到一次往返。`,
+        details:[
+          {k:'Query',v:isMX?domain+' MX':host+' A'},
+          {k:'Resolver',v:'8.8.8.8:53 (UDP)'},
+          {k:'Flags',v:'RD=1 (Recursion Desired)'},
+          {k:'Browser / OS Cache',v:'MISS'},
+        ],
+        tech:'Recursive Resolver 對客戶端隱藏了 Root → TLD → Auth 三層迭代查詢。細節模式可展開完整查詢鏈。',
+        fail:null,
+        interview:'Recursive 模型讓客戶端實作極簡，只需一次 UDP 查詢即可。Resolver 本身快取各層結果，降低整體網路負擔。',
+      },
+      {
+        id:'dns-return', stageIdx:2,
+        title:'IP 位址回傳', titleEN:'IP Returned',
+        protocol:'DNS Response', layer:'Application', packetType:'DNS Response',
+        badgeClass:'b-dns', badgeText:'DNS',
+        from:'resolver', to:'browser', pkt: isMX?'MX+IP':'93.184…', pktColor:'#45D483',
+        activeNodes:['browser','resolver'], activeEdges:['e-br'],
+        kpiProto:'DNS', kpiLat:'~ 45ms', kpiStatus:'RESOLVED',
+        what: isMX
+          ?`MX 記錄與 Mail Server IP 回傳（mail.${domain} → 198.51.100.5）。現在可以建立 TCP 連線。`
+          :`最終 IP 回傳至客戶端。現在可以建立 TCP 連線。`,
+        details: isMX
+          ?[{k:'MX',v:'mail.'+domain},{k:'Priority',v:'10'},{k:'IP',v:'198.51.100.5',c:'c-success'},{k:'TTL',v:'3600s'}]
+          :[{k:'IP',v:'93.184.216.34',c:'c-success'},{k:'TTL',v:'3600s'},{k:'Total DNS',v:'~45ms'}],
+        tech:'結果寫入 OS Resolver 快取（TTL=3600s），後續查詢命中率極高。',
+        fail:null,
+        interview:'DNS 延遲是 TTFB 的重要成份。DoH / DoT 將 DNS 查詢加密，提升隱私。',
+      },
+    ];
+  }
+
+  // mode === 'detailed' (default)
   return [
     {
       id:'dns-cache', stageIdx:1,
@@ -693,6 +792,20 @@ function dnsStepsBuilder(host, isMX) {
   ];
 }
 
+// ─── SHARED TRUNCATION HELPER ──────────────────────────
+function truncateDnsFail(S){
+  let i = S.findIndex(s=>s.id==='dns-auth');
+  if(i<0) i = S.findIndex(s=>s.id==='dns-query');
+  if(i<0) i = S.findIndex(s=>s.id==='dns-cache-hit');
+  if(i<0) return S;
+  const st=S[i];
+  st.badgeClass='b-error'; st.badgeText='NXDOMAIN';
+  st.kpiStatus='NXDOMAIN'; st.pktColor='#FF6B6B'; st.pkt='FAIL';
+  st.fail='DNS 查詢失敗（NXDOMAIN）。此域名無對應記錄，瀏覽器將顯示「ERR_NAME_NOT_RESOLVED」。檢查 DNS A/CNAME/MX 記錄設定，或該域名是否拼錯、過期。';
+  st.isError=true;
+  return S.slice(0,i+1);
+}
+
 // ─── SHARED TCP HANDSHAKE STEPS BUILDER ────────────────
 function tcpStepsBuilder(port, scenario) {
   return [
@@ -773,7 +886,7 @@ function buildFtpSteps(scenario, host) {
       fail:null,
       interview:'FTP 是明文協定，USER/PASS 在網路上完全暴露。現代環境應優先使用 SFTP（SSH File Transfer Protocol，port 22）或 FTPS（FTP over TLS）。SFTP 只需單一 port，防火牆規則更簡單，是 DevOps 最常見選擇。',
     },
-    ...dnsStepsBuilder(host, false),
+    ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(21, scenario),
     {
       id:'ftp-220', stageIdx:4,
@@ -866,7 +979,19 @@ function buildFtpSteps(scenario, host) {
     },
   ];
   if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
-  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  if(scenario==='auth-fail'){
+    const i=S.findIndex(s=>s.id==='ftp-auth');
+    if(i>=0){
+      const st=S[i];
+      st.badgeClass='b-error'; st.badgeText='530';
+      st.kpiStatus='AUTH FAIL'; st.pktColor='#FF6B6B'; st.pkt='530';
+      st.details=[{k:'C→S',v:'USER badname'},{k:'S→C',v:'331 Password required'},{k:'C→S',v:'PASS ****'},{k:'S→C',v:'530 Login incorrect',c:'c-error'}];
+      st.fail='FTP 認證失敗（530 Login incorrect）。常見原因：USER/PASS 錯誤、帳號被停用、匿名登入被關閉。正式環境應改用 SFTP / FTPS + 金鑰或強密碼政策，並檢查 /var/log/vsftpd.log 的審計紀錄。';
+      st.isError=true;
+    }
+    return S.slice(0,i+1);
+  }
   return S;
 }
 
@@ -892,7 +1017,7 @@ function buildSmtpSteps(scenario, host) {
       fail:null,
       interview:'SMTP port 25 是 MTA 對 MTA 的傳遞；port 587（SUBMISSION）是 MUA 對 MSA 的提交，需要身份驗證；port 465 是 SMTPS（TLS 封裝）。Port 25 通常被 ISP 封鎖以防止垃圾郵件。這三個 port 的區別在面試中很常考。',
     },
-    ...dnsStepsBuilder(host, true),
+    ...dnsStepsBuilder(host, true, state.dnsMode),
     ...tcpStepsBuilder(587, scenario),
     {
       id:'smtp-220', stageIdx:4,
@@ -988,7 +1113,19 @@ function buildSmtpSteps(scenario, host) {
     },
   ];
   if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
-  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  if(scenario==='auth-fail'){
+    const i=S.findIndex(s=>s.id==='smtp-auth');
+    if(i>=0){
+      const st=S[i];
+      st.badgeClass='b-error'; st.badgeText='535';
+      st.kpiStatus='AUTH FAIL'; st.pktColor='#FF6B6B'; st.pkt='535';
+      st.details=[{k:'C→S',v:'AUTH LOGIN'},{k:'S→C',v:'334 VXNlcm5hbWU6'},{k:'C→S',v:'<base64 user>'},{k:'S→C',v:'334 UGFzc3dvcmQ6'},{k:'C→S',v:'<base64 pass>'},{k:'S→C',v:'535 5.7.8 Authentication credentials invalid',c:'c-error'}];
+      st.fail='SMTP 535 認證失敗。常見原因：SASL 憑證錯誤、應用程式密碼未啟用（Gmail/Office 365 需要專屬 App Password）、IP 被加入黑名單。排查方向：檢查伺服器 auth log 與 SPF/DKIM/DMARC 設定。';
+      st.isError=true;
+    }
+    return S.slice(0,i+1);
+  }
   return S;
 }
 
@@ -1014,7 +1151,7 @@ function buildImapSteps(scenario, host) {
       fail:null,
       interview:'IMAP vs POP3 是郵件協定最常見的面試題。IMAP 伺服器端同步、支援多設備、可只下載 Header；POP3 下載後刪除伺服器郵件（預設），適合單設備離線閱讀。現代郵件服務（Gmail、Outlook）全部使用 IMAP/Exchange ActiveSync。',
     },
-    ...dnsStepsBuilder(host, false),
+    ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(993, scenario),
     {
       id:'imap-greeting', stageIdx:4,
@@ -1111,7 +1248,19 @@ function buildImapSteps(scenario, host) {
     },
   ];
   if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
-  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  if(scenario==='auth-fail'){
+    const i=S.findIndex(s=>s.id==='imap-login');
+    if(i>=0){
+      const st=S[i];
+      st.badgeClass='b-error'; st.badgeText='NO';
+      st.kpiStatus='AUTH FAIL'; st.pktColor='#FF6B6B'; st.pkt='NO';
+      st.details=[{k:'C→S',v:'A001 LOGIN user@'+domain+' ****'},{k:'S→C',v:'A001 NO [AUTHENTICATIONFAILED] Invalid credentials',c:'c-error'}];
+      st.fail='IMAP 認證失敗（NO AUTHENTICATIONFAILED）。檢查帳號密碼、是否需要 OAuth2 XOAUTH2、IP 白名單或 App Password。現代郵件服務多數已停用 LOGIN 明文認證，請改用 SASL/OAuth2。';
+      st.isError=true;
+    }
+    return S.slice(0,i+1);
+  }
   return S;
 }
 
@@ -1137,7 +1286,7 @@ function buildPop3Steps(scenario, host) {
       fail:null,
       interview:'POP3 的優點：簡單、低伺服器儲存需求、支援離線閱讀（完整下載後斷線）。缺點：不支援多設備同步（第二台設備看不到已下載郵件）、無資料夾同步、難以搜索。現代應用幾乎全面採用 IMAP，POP3 主要用於遺留系統或嚴格的離線需求場景。',
     },
-    ...dnsStepsBuilder(host, false),
+    ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(995, scenario),
     {
       id:'pop3-greeting', stageIdx:4,
@@ -1215,13 +1364,26 @@ function buildPop3Steps(scenario, host) {
     },
   ];
   if(scenario==='tcp-timeout'){ const i=S.findIndex(s=>s.id==='tcp-syn'); return S.slice(0,i+1); }
-  if(scenario==='dns-fail'){    const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  if(scenario==='auth-fail'){
+    const i=S.findIndex(s=>s.id==='pop3-auth');
+    if(i>=0){
+      const st=S[i];
+      st.badgeClass='b-error'; st.badgeText='-ERR';
+      st.kpiStatus='AUTH FAIL'; st.pktColor='#FF6B6B'; st.pkt='-ERR';
+      st.details=[{k:'C→S',v:'USER user@'+domain},{k:'S→C',v:'+OK Password required'},{k:'C→S',v:'PASS ****'},{k:'S→C',v:'-ERR [AUTH] Authentication failed',c:'c-error'}];
+      st.fail='POP3 認證失敗（-ERR [AUTH]）。檢查使用者名稱/密碼、APOP 挑戰回應是否正確、伺服器是否啟用 TLS（POP3S port 995）或要求 STLS。建議改用 OAuth2 或應用程式密碼。';
+      st.isError=true;
+    }
+    return S.slice(0,i+1);
+  }
   return S;
 }
 
 // ─── SNMP STEPS BUILDER ────────────────────────────────
 function buildSnmpSteps(scenario, host) {
   const domain = host.split('.').slice(-2).join('.');
+  state.dnsMode = 'cached';
   const S = [
     {
       id:'url-parse', stageIdx:0,
@@ -1241,7 +1403,7 @@ function buildSnmpSteps(scenario, host) {
       fail:null,
       interview:'SNMP Community String 是 v1/v2c 的重大安全弱點：明文傳輸且默認值（"public"/"private"）幾乎到處都是。CVE 中有大量 SNMP Community String 洩漏導致的網路設備被控事件。SNMPv3 的 authPriv 模式（認證+加密）是現代網路管理的最低安全標準。',
     },
-    ...dnsStepsBuilder(host, false),
+    ...dnsStepsBuilder(host, false, state.dnsMode),
     {
       id:'snmp-get', stageIdx:3,
       title:'SNMP GetRequest — UDP 查詢', titleEN:'SNMP GetRequest (UDP)',
@@ -1316,7 +1478,7 @@ function buildSnmpSteps(scenario, host) {
       isLast:true,
     },
   ];
-  if(scenario==='dns-fail'){ const i=S.findIndex(s=>s.id==='dns-auth'); return S.slice(0,i+1); }
+  if(scenario==='dns-fail') return truncateDnsFail(S);
   return S;
 }
 
@@ -1353,6 +1515,8 @@ function buildSteps(scenario, host, protocol) {
       fail:null,
       interview:'URL 的每個部分都有意義：scheme 決定協定、host 決定目標主機、port 決定服務埠（http 預設 80、https 預設 443）、path 決定資源位置。面試可提及 Chrome 地址欄實際上也是搜索引擎入口，會先判斷輸入是 URL 還是關鍵字。',
     },
+    ...(state.dnsMode !== 'detailed' ? dnsStepsBuilder(host, false, state.dnsMode) : []),
+    ...(state.dnsMode === 'detailed' ? [
     {
       id:'dns-cache', stageIdx:1,
       title:'查詢 DNS 快取', titleEN:'DNS Cache Check',
@@ -1465,6 +1629,7 @@ function buildSteps(scenario, host, protocol) {
       fail:null,
       interview:'DNS 解析時間是前端性能優化的關鍵指標。CDN 可以透過 GeoDNS 讓使用者連到最近的節點。DNS over HTTPS（DoH）和 DNS over TLS（DoT）是現代隱私強化方案，防止 ISP 監聽 DNS 查詢。',
     },
+    ] : []),
     {
       id:'tcp-syn', stageIdx:3,
       title:'TCP SYN', titleEN:'TCP Handshake — SYN',
@@ -1577,10 +1742,7 @@ function buildSteps(scenario, host, protocol) {
     },
   ];
 
-  if (scenario==='dns-fail') {
-    const i = S.findIndex(s=>s.id==='dns-auth');
-    return S.slice(0, i+1);
-  }
+  if (scenario==='dns-fail') return truncateDnsFail(S);
   if (scenario==='tcp-timeout') {
     const i = S.findIndex(s=>s.id==='tcp-syn');
     return S.slice(0, i+1);
@@ -1594,7 +1756,7 @@ function buildSteps(scenario, host, protocol) {
 const state = {
   steps:[], idx:-1, playing:false, playTimer:null, animRAF:null,
   speed:1, scenario:'normal', host:'example.com', protocol:'https',
-  pktCount:0, started:false,
+  dnsMode:'compact', pktCount:0, started:false,
 };
 
 // ═══════════════════════════════════════════════════════
@@ -1664,13 +1826,13 @@ function drawTopology() {
     const lbl = svgEl('text',{x:n.cx,y:n.cy+13,
       'text-anchor':'middle','dominant-baseline':'middle',
       'font-size':'11.5','font-weight':'600','fill':'var(--text)',
-      'font-family':'Inter,sans-serif'});
+      'font-family':'Inter,sans-serif','id':'nlbl-'+n.id});
     lbl.textContent=n.name;
     // Type
     const type = svgEl('text',{x:n.cx,y:n.cy+27,
       'text-anchor':'middle','dominant-baseline':'middle',
       'font-size':'8.5','fill':'var(--text2)',
-      'font-family':'JetBrains Mono,monospace','letter-spacing':'0.5'});
+      'font-family':'JetBrains Mono,monospace','letter-spacing':'0.5','id':'ntyp-'+n.id});
     type.textContent=n.type;
 
     [rect,strip,dot,icon,lbl,type].forEach(el=>g.appendChild(el));
@@ -2105,7 +2267,7 @@ function showDoneOverlay(){
   `;
 }
 function showFailOverlay(step){
-  const titles = {'dns-fail':'DNS Resolution Failed','tcp-timeout':'TCP Connection Timeout','server-slow':'Slow Response'};
+  const titles = {'dns-fail':'DNS Resolution Failed','tcp-timeout':'TCP Connection Timeout','server-slow':'Slow Response','auth-fail':'Authentication Failed'};
   document.getElementById('failTitle').textContent = titles[state.scenario]||'Request Failed';
   document.getElementById('failDesc').textContent = step.fail || '請求在此步驟中斷，請切換情境或重試。';
   document.getElementById('failOverlay').classList.add('on');
@@ -2163,9 +2325,13 @@ function initSim() {
   state.host=host;
   state.protocol=protocol;
   state.scenario=document.getElementById('scenarioSel').value;
+  const dnsModeEl=document.getElementById('dnsModeSel');
+  state.dnsMode=dnsModeEl?dnsModeEl.value:'compact';
+  if(protocol==='snmp') state.dnsMode='cached';
   state.steps=buildSteps(state.scenario,state.host,state.protocol);
   state.idx=-1; state.pktCount=0; state.started=true;
 
+  updateNodeLabels(state.protocol);
   resetAllVisuals();
   updateStageTabs();
   updateLeftSidebar();
