@@ -562,13 +562,19 @@ const NODES = [
 ];
 
 const PROTOCOL_LABELS = {
-  https:    { browser:['Browser','CLIENT'],       webserver:['Web Server','ORIGIN'],      render:['Browser Render','RENDERER'] },
-  http:     { browser:['Browser','CLIENT'],       webserver:['Web Server','ORIGIN'],      render:['Browser Render','RENDERER'] },
-  ftp:      { browser:['FTP Client','CLIENT'],    webserver:['FTP Server','vsftpd'],      render:['Local Filesystem','STORAGE'] },
-  smtp:     { browser:['MUA','Mail User Agent'],  webserver:['MTA (Submission)','SMTP/587'],render:['Recipient Inbox','MDA'] },
-  imap:     { browser:['Mail Client','MUA'],      webserver:['IMAP Server','993/TLS'],    render:['Local Mailbox Cache','CACHE'] },
-  pop3:     { browser:['Mail Client','MUA'],      webserver:['POP3 Server','995/TLS'],    render:['Local Mailbox','STORE'] },
-  snmp:     { browser:['SNMP Manager','NMS'],     webserver:['SNMP Agent','Device'],      render:['MIB Parser','Data'] },
+  https:    { browser:['Browser','CLIENT','🌐'],        webserver:['Web Server','ORIGIN','🖥'],        render:['Browser Render','RENDERER','🎨'] },
+  http:     { browser:['Browser','CLIENT','🌐'],        webserver:['Web Server','ORIGIN','🖥'],        render:['Browser Render','RENDERER','🎨'] },
+  ftp:      { browser:['FTP Client','CLIENT','📤'],     webserver:['FTP Server','vsftpd','📁'],        render:['Local Filesystem','STORAGE','💾'] },
+  smtp:     { browser:['MUA','Mail User Agent','✉️'],   webserver:['MTA (Submission)','SMTP/587','📮'],render:['Recipient Inbox','MDA','📥'] },
+  imap:     { browser:['Mail Client','MUA','📧'],       webserver:['IMAP Server','993/TLS','🗄'],      render:['Local Mailbox Cache','CACHE','💾'] },
+  pop3:     { browser:['Mail Client','MUA','📧'],       webserver:['POP3 Server','995/TLS','📨'],      render:['Local Mailbox','STORE','💾'] },
+  snmp:     { browser:['SNMP Manager','NMS','📡'],      webserver:['SNMP Agent','Device','🔧'],        render:['MIB Parser','Data','📊'] },
+};
+
+const DNS_ZONE_LABELS = {
+  detailed: { text:'DNS RESOLUTION (FULL)',    dimNodes:[],                                dimEdges:[] },
+  compact:  { text:'DNS RESOLUTION (COMPACT)', dimNodes:['root','tld','auth'],             dimEdges:['e-rt','e-tl','e-ra'] },
+  cached:   { text:'LOCAL CACHE HIT',          dimNodes:['recursive','root','tld','auth'], dimEdges:['e-rr','e-rt','e-tl','e-ra'] },
 };
 
 function updateNodeLabels(protocol){
@@ -578,8 +584,26 @@ function updateNodeLabels(protocol){
     if(!pair) return;
     const lbl = document.getElementById('nlbl-'+id);
     const typ = document.getElementById('ntyp-'+id);
+    const ico = document.getElementById('nicon-'+id);
     if(lbl) lbl.textContent = pair[0];
     if(typ) typ.textContent = pair[1];
+    if(ico && pair[2]) ico.textContent = pair[2];
+  });
+
+  const mode = state.dnsMode || 'detailed';
+  const zone = DNS_ZONE_LABELS[mode] || DNS_ZONE_LABELS.detailed;
+  const zl = document.getElementById('dnsZoneLabel');
+  const zr = document.getElementById('dnsZoneRect');
+  if(zl) zl.textContent = protocol==='smtp' && mode!=='cached' ? 'DNS MX LOOKUP' : (protocol==='snmp' ? 'STATIC / LOCAL RESOLVE' : zone.text);
+  if(zr) zr.setAttribute('opacity', zone.dimNodes.length>0 ? '.2' : '.6');
+
+  ['recursive','root','tld','auth'].forEach(id=>{
+    const g = document.getElementById('nd-'+id);
+    if(g) g.style.opacity = zone.dimNodes.includes(id) ? '0.3' : '1';
+  });
+  ['e-rr','e-rt','e-tl','e-ra'].forEach(eid=>{
+    const e = document.getElementById(eid);
+    if(e) e.style.opacity = zone.dimEdges.includes(eid) ? '0.2' : '';
   });
 }
 
@@ -1779,11 +1803,11 @@ function drawTopology() {
   // DNS zone indicator
   const zone = svgEl('rect',{x:490,y:30,width:166,height:270,rx:12,
     fill:'none',stroke:'#2A3445',
-    'stroke-dasharray':'4 3','stroke-width':'1','opacity':'.6'});
+    'stroke-dasharray':'4 3','stroke-width':'1','opacity':'.6','id':'dnsZoneRect'});
   edgesG.appendChild(zone);
   const zoneLabel = svgEl('text',{x:573,y:24,
     'text-anchor':'middle','font-size':'8.5','font-weight':'600',
-    'letter-spacing':'1','fill':'#2A3445','font-family':'JetBrains Mono,monospace'});
+    'letter-spacing':'1','fill':'#2A3445','font-family':'JetBrains Mono,monospace','id':'dnsZoneLabel'});
   zoneLabel.textContent='DNS RESOLUTION';
   edgesG.appendChild(zoneLabel);
 
@@ -1820,7 +1844,7 @@ function drawTopology() {
       fill:'var(--text2)','id':'ndot-'+n.id});
     // Icon
     const icon = svgEl('text',{x:n.cx,y:n.cy-10,
-      'text-anchor':'middle','dominant-baseline':'middle','font-size':'22'});
+      'text-anchor':'middle','dominant-baseline':'middle','font-size':'22','id':'nicon-'+n.id});
     icon.textContent=n.icon;
     // Name
     const lbl = svgEl('text',{x:n.cx,y:n.cy+13,
