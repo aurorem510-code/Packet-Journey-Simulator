@@ -403,7 +403,6 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
       <label>DNS</label>
       <select class="sel" id="dnsModeSel">
         <option value="compact" selected>🔹 Compact</option>
-        <option value="detailed">🔍 Detailed</option>
         <option value="cached">⚡ Cached</option>
       </select>
     </div>
@@ -471,7 +470,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 
     <!-- SVG topology -->
     <div class="topo-area">
-      <svg id="topSvg" viewBox="0 0 1060 340" xmlns="http://www.w3.org/2000/svg">
+      <svg id="topSvg" viewBox="0 0 800 340" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="dotGrid" width="24" height="24" patternUnits="userSpaceOnUse">
             <circle cx="12" cy="12" r="1" fill="#2A3445" opacity=".5"/>
@@ -554,11 +553,8 @@ const NODES = [
   { id:'browser',   name:'Browser',        type:'CLIENT',    icon:'🌐', cx:76,  cy:170, tt:'用戶端瀏覽器，發起所有請求，最終渲染頁面。'},
   { id:'resolver',  name:'OS Resolver',    type:'DNS-CACHE', icon:'💻', cx:236, cy:170, tt:'作業系統 DNS 解析器，持有本地快取，向上游查詢。'},
   { id:'recursive', name:'Recursive DNS',  type:'RESOLVER',  icon:'🔄', cx:396, cy:170, tt:'遞回解析器（如 8.8.8.8），代替客戶端完成完整 DNS 查詢鏈。'},
-  { id:'root',      name:'Root DNS',       type:'ROOT-NS',   icon:'🌍', cx:548, cy:78,  tt:'DNS 根伺服器，指向各 TLD Name Server。全球 13 組，Anycast 1000+ 節點。'},
-  { id:'tld',       name:'TLD DNS',        type:'TLD-NS',    icon:'📂', cx:548, cy:170, tt:'頂級域名伺服器，持有該 TLD 下所有網域的 NS 委派記錄。'},
-  { id:'auth',      name:'Auth DNS',       type:'AUTH-NS',   icon:'🔑', cx:548, cy:262, tt:'權威 DNS，持有最終 A/AAAA 記錄，是 DNS 查詢的真相來源。'},
-  { id:'webserver', name:'Web Server',     type:'ORIGIN',    icon:'🖥', cx:726, cy:170, tt:'源站伺服器，接收 HTTP/HTTPS 請求並回傳網頁資源。'},
-  { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:916, cy:170, tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
+  { id:'webserver', name:'Web Server',     type:'ORIGIN',    icon:'🖥', cx:556, cy:170, tt:'源站伺服器，接收 HTTP/HTTPS 請求並回傳網頁資源。'},
+  { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:716, cy:170, tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
 ];
 
 const PROTOCOL_LABELS = {
@@ -572,9 +568,8 @@ const PROTOCOL_LABELS = {
 };
 
 const DNS_ZONE_LABELS = {
-  detailed: { text:'DNS RESOLUTION (FULL)',    dimNodes:[],                                dimEdges:[] },
-  compact:  { text:'DNS RESOLUTION (COMPACT)', dimNodes:['root','tld','auth'],             dimEdges:['e-rt','e-tl','e-ra'] },
-  cached:   { text:'LOCAL CACHE HIT',          dimNodes:['recursive','root','tld','auth'], dimEdges:['e-rr','e-rt','e-tl','e-ra'] },
+  compact:  { text:'DNS RESOLUTION', dimNodes:[],           dimEdges:[]       },
+  cached:   { text:'LOCAL CACHE HIT',dimNodes:['recursive'],dimEdges:['e-rr'] },
 };
 
 function updateNodeLabels(protocol){
@@ -590,18 +585,18 @@ function updateNodeLabels(protocol){
     if(ico && pair[2]) ico.textContent = pair[2];
   });
 
-  const mode = state.dnsMode || 'detailed';
-  const zone = DNS_ZONE_LABELS[mode] || DNS_ZONE_LABELS.detailed;
+  const mode = state.dnsMode || 'compact';
+  const zone = DNS_ZONE_LABELS[mode] || DNS_ZONE_LABELS.compact;
   const zl = document.getElementById('dnsZoneLabel');
   const zr = document.getElementById('dnsZoneRect');
   if(zl) zl.textContent = protocol==='smtp' && mode!=='cached' ? 'DNS MX LOOKUP' : (protocol==='snmp' ? 'STATIC / LOCAL RESOLVE' : zone.text);
-  if(zr) zr.setAttribute('opacity', zone.dimNodes.length>0 ? '.2' : '.6');
+  if(zr) zr.setAttribute('opacity', zone.dimNodes.length>0 ? '.2' : '.5');
 
-  ['recursive','root','tld','auth'].forEach(id=>{
+  ['recursive'].forEach(id=>{
     const g = document.getElementById('nd-'+id);
     if(g) g.style.opacity = zone.dimNodes.includes(id) ? '0.3' : '1';
   });
-  ['e-rr','e-rt','e-tl','e-ra'].forEach(eid=>{
+  ['e-rr'].forEach(eid=>{
     const e = document.getElementById(eid);
     if(e) e.style.opacity = zone.dimEdges.includes(eid) ? '0.2' : '';
   });
@@ -610,9 +605,6 @@ function updateNodeLabels(protocol){
 const EDGES_DEF = [
   { id:'e-br',   from:'browser',   to:'resolver',  style:'solid',  curved:false },
   { id:'e-rr',   from:'resolver',  to:'recursive', style:'solid',  curved:false },
-  { id:'e-rt',   from:'recursive', to:'root',      style:'dashed', curved:false },
-  { id:'e-tl',   from:'recursive', to:'tld',       style:'dashed', curved:false },
-  { id:'e-ra',   from:'recursive', to:'auth',      style:'dashed', curved:false },
   { id:'e-bw',   from:'browser',   to:'webserver', style:'dashed', curved:true  },
   { id:'e-ws',   from:'webserver', to:'render',    style:'solid',  curved:false },
 ];
@@ -632,8 +624,7 @@ NODES.forEach(n=>TOOLTIP_DATA[n.id]=n.tt);
 
 // ─── SHARED DNS STEPS BUILDER ──────────────────────────
 function dnsStepsBuilder(host, isMX, mode) {
-  mode = mode || 'detailed';
-  const tld = host.split('.').pop();
+  mode = mode || 'compact';
   const domain = host.split('.').slice(-2).join('.');
 
   if (mode === 'cached') {
@@ -701,125 +692,11 @@ function dnsStepsBuilder(host, isMX, mode) {
     ];
   }
 
-  // mode === 'detailed' (default)
-  return [
-    {
-      id:'dns-cache', stageIdx:1,
-      title: isMX?'查詢 DNS MX 快取':'查詢 DNS 快取', titleEN: isMX?'DNS MX Cache Check':'DNS Cache Check',
-      protocol:'DNS / Cache', layer:'Application', packetType: isMX?'MX Cache Miss':'Cache Miss',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'browser', to:'resolver', pkt: isMX?'MX?':'Cache?', pktColor:'#3DD9C5',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
-      kpiProto:'DNS', kpiLat:'~ 1ms', kpiStatus:'MISS',
-      what: isMX
-        ?`郵件客戶端查詢 ${domain} 的 MX 記錄，找出負責接收郵件的 Mail Server 主機名稱。Cache Miss，需進行完整 DNS MX 查詢。`
-        :`本機 DNS 快取未命中（Cache Miss），需完整走過 DNS 查詢鏈取得目標主機 IP。`,
-      details:[
-        {k:'Query Name',v:isMX?domain:host},{k:'Query Type',v:isMX?'MX':'A (IPv4)'},
-        {k:'Browser Cache',v:'MISS'},{k:'OS Cache',v:'MISS'},
-      ],
-      tech: isMX
-        ?'MX 記錄指向郵件交換伺服器，含優先級（priority）欄位。優先級越低越優先被嘗試連線。'
-        :'DNS 快取分多層：瀏覽器 → OS（/etc/hosts）→ 路由器 → ISP Resolver，任一層命中即跳過後續查詢。',
-      fail:null,
-      interview: isMX
-        ?'SMTP 不直接查 A 記錄，而是先查 MX 記錄，再對 MX hostname 做 A 查詢。一個域名可有多個 MX 記錄作備援，透過 priority 欄位控制優先順序。'
-        :'DNS 快取多層結構是效能優化的基礎。`dns-prefetch` 讓瀏覽器提前解析第三方域名，縮短 DNS 查詢延遲。',
-    },
-    {
-      id:'dns-recursive', stageIdx:1,
-      title:'請求 Recursive DNS', titleEN:'Query Recursive Resolver',
-      protocol:'DNS over UDP (port 53)', layer:'Application', packetType:'DNS Recursive Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'resolver', to:'recursive', pkt:'RD=1', pktColor:'#3DD9C5',
-      activeNodes:['resolver','recursive'], activeEdges:['e-rr'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 5ms', kpiStatus:'QUERY',
-      what:`OS Resolver 向 Recursive DNS（如 8.8.8.8）發出遞回查詢，請求解析 ${isMX?domain+' MX':host+' A'} 記錄。`,
-      details:[
-        {k:'Dst IP',v:'8.8.8.8:53'},{k:'Protocol',v:'UDP'},
-        {k:'Query',v:isMX?domain+' MX?':host+' A?'},{k:'RD Flag',v:'1 (Recursion Desired)'},
-      ],
-      tech:'Recursive Resolver 優先查快取，miss 後才開始迭代查詢（Root → TLD → Auth）。DNS 通常使用 UDP，回應超過 512 bytes 時切換至 TCP。',
-      fail:null,
-      interview:'Recursive Resolver 是「代理人」模型：客戶端只需一次 UDP 查詢，Resolver 完成所有迭代查詢。Google 8.8.8.8 與 Cloudflare 1.1.1.1 都是公共 Recursive DNS。',
-    },
-    {
-      id:'dns-root', stageIdx:1,
-      title:'Recursive → Root DNS', titleEN:'Query Root DNS',
-      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Iterative Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'recursive', to:'root', pkt:'.'+tld+' NS?', pktColor:'#3DD9C5',
-      activeNodes:['recursive','root'], activeEdges:['e-rt'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 20ms', kpiStatus:'REFERRAL',
-      what:`Recursive DNS 向 Root Name Server 查詢，Root 指向 .${tld} 的 TLD Name Server。`,
-      details:[
-        {k:'Root Server',v:'a.root-servers.net'},
-        {k:'Response',v:'.'+tld+' TLD NS referral'},{k:'AA Flag',v:'0 (not authoritative)'},
-      ],
-      tech:'全球共 13 組 Root Server（A–M），透過 Anycast 技術部署 1,000+ 個節點。Root Server 只保存 TLD 的 NS 記錄。',
-      fail:null,
-      interview:'Root Server 的 IP 被硬編碼進每個 Recursive Resolver（Root Hints File）。Root Server 不回答「IP 是什麼」，只回答「去哪裡問 TLD」——體現 DNS 分層委派的設計哲學。',
-    },
-    {
-      id:'dns-tld', stageIdx:1,
-      title:'Recursive → TLD DNS', titleEN:'Query TLD DNS',
-      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Iterative Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'recursive', to:'tld', pkt:domain+' NS?', pktColor:'#3DD9C5',
-      activeNodes:['recursive','tld'], activeEdges:['e-tl'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 30ms', kpiStatus:'REFERRAL',
-      what:`TLD Name Server 將 Recursive DNS 指向 ${domain} 的 Authoritative DNS。`,
-      details:[
-        {k:'TLD Server',v:'a.gtld-servers.net'},
-        {k:'Response',v:'NS records for '+domain},{k:'Delegation',v:'ns1.'+domain},
-      ],
-      tech:'TLD Server 只保存 NS 記錄，不持有 A 記錄——每層只知道「下一層在哪裡」，這是 DNS 分層設計的核心。',
-      fail:null,
-      interview:'TLD 委派讓 DNS 具備極高可擴展性：全球數百萬域名不需集中管理，透過分層委派分散到各 Authoritative DNS。',
-    },
-    {
-      id:'dns-auth', stageIdx:1,
-      title:'Recursive → Auth DNS', titleEN:'Query Authoritative DNS',
-      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Authoritative Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'recursive', to:'auth', pkt: isMX?'MX?':'A Record?', pktColor:'#3DD9C5',
-      activeNodes:['recursive','auth'], activeEdges:['e-ra'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 45ms', kpiStatus:'OK',
-      what:`Auth DNS 回傳 ${isMX?domain+' 的 MX 記錄（mail.'+domain+'）及其對應 IP':host+' 最終 A 記錄'}。AA=1 代表權威答案。`,
-      details:[
-        {k:'Auth Server',v:'ns1.'+domain},
-        {k:'AA Flag',v:'1 (Authoritative Answer)'},
-        isMX?{k:'Response',v:'mail.'+domain+' priority 10'}:{k:'Response',v:'93.184.216.34 (TTL 3600)'},
-      ],
-      tech:'只有 Authoritative DNS 的回應才帶有 AA=1 旗標，代表最終權威答案。TTL 決定 Recursive Resolver 快取此記錄多久。',
-      fail:null,
-      interview:'Authoritative DNS 是 DNS 查詢的真相來源。現代雲端服務（AWS Route 53、Cloudflare DNS）支援 GeoDNS（地理定向）和健康檢查，讓 DNS 不只是「查 IP」，也是流量調度工具。',
-    },
-    {
-      id:'dns-return', stageIdx:2,
-      title:'IP 位址回傳', titleEN:'IP Returned',
-      protocol:'DNS Response', layer:'Application', packetType:'DNS Response',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'resolver', to:'browser', pkt: isMX?'MX+IP':'93.184…', pktColor:'#45D483',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
-      kpiProto:'DNS', kpiLat:'~ 50ms', kpiStatus:'RESOLVED',
-      what: isMX
-        ?`MX 記錄與郵件伺服器 IP 回傳至客戶端（mail.${domain} → 198.51.100.5）。現在可以建立 TCP 連線。`
-        :`IP 逐層回傳。客戶端現在知道目標 IP，可以開始建立 TCP 連線。`,
-      details: isMX
-        ?[{k:'MX Record',v:'mail.'+domain},{k:'Priority',v:'10'},{k:'IP',v:'198.51.100.5',c:'c-success'},{k:'TTL',v:'3600s'}]
-        :[{k:'Resolved IP',v:'93.184.216.34',c:'c-success'},{k:'TTL',v:'3600s'},{k:'Total DNS Time',v:'~50ms'}],
-      tech:'DNS 解析結果快取至 OS Resolver（TTL=3600s）。後續查詢直接命中快取，延遲降至 <1ms。',
-      fail:null,
-      interview:'DNS 解析時間是影響 TTFB 的重要因素。DoH（DNS over HTTPS）和 DoT（DNS over TLS）可防止 ISP 監聽 DNS 查詢，是現代隱私強化方案。',
-    },
-  ];
 }
 
 // ─── SHARED TRUNCATION HELPER ──────────────────────────
 function truncateDnsFail(S){
-  let i = S.findIndex(s=>s.id==='dns-auth');
-  if(i<0) i = S.findIndex(s=>s.id==='dns-query');
+  let i = S.findIndex(s=>s.id==='dns-query');
   if(i<0) i = S.findIndex(s=>s.id==='dns-cache-hit');
   if(i<0) return S;
   const st=S[i];
@@ -1539,121 +1416,7 @@ function buildSteps(scenario, host, protocol) {
       fail:null,
       interview:'URL 的每個部分都有意義：scheme 決定協定、host 決定目標主機、port 決定服務埠（http 預設 80、https 預設 443）、path 決定資源位置。面試可提及 Chrome 地址欄實際上也是搜索引擎入口，會先判斷輸入是 URL 還是關鍵字。',
     },
-    ...(state.dnsMode !== 'detailed' ? dnsStepsBuilder(host, false, state.dnsMode) : []),
-    ...(state.dnsMode === 'detailed' ? [
-    {
-      id:'dns-cache', stageIdx:1,
-      title:'查詢 DNS 快取', titleEN:'DNS Cache Check',
-      protocol:'DNS / Browser Cache', layer:'Application', packetType:'Cache Miss',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'browser', to:'resolver', pkt:'Cache?', pktColor:'#3DD9C5',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
-      kpiProto:'DNS', kpiLat:'~ 1ms', kpiStatus:'MISS',
-      what:`瀏覽器先查自身 DNS 快取，再詢問 OS Resolver。本次為冷啟動，快取未命中（Cache Miss），需完整走過 DNS 查詢鏈。`,
-      details:[
-        {k:'Query Name',v:host},{k:'Query Type',v:'A (IPv4)'},
-        {k:'Browser Cache',v:'MISS'},{k:'OS Cache',v:'MISS'},
-        {k:'Next Step',v:'Recursive DNS Query'},
-      ],
-      tech:'DNS 快取分多層：瀏覽器快取 → OS 快取（/etc/hosts）→ 路由器 → ISP Resolver。每層都有獨立 TTL，任一層命中即可跳過後續查詢，大幅降低延遲。',
-      fail:null,
-      interview:'DNS 快取機制是前端性能優化的切入點：<link rel="dns-prefetch"> 可預先解析第三方域名；短 TTL 有利於快速切換 IP（如 Blue-Green 部署），長 TTL 則減輕 DNS 伺服器壓力。這個取捨值得在面試中展開討論。',
-    },
-    {
-      id:'dns-recursive', stageIdx:1,
-      title:'請求 Recursive DNS', titleEN:'Query Recursive Resolver',
-      protocol:'DNS over UDP (port 53)', layer:'Application', packetType:'DNS Recursive Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'resolver', to:'recursive', pkt:'RD=1', pktColor:'#3DD9C5',
-      activeNodes:['resolver','recursive'], activeEdges:['e-rr'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 5ms', kpiStatus:'QUERY',
-      what:`OS Resolver 向 Recursive DNS（如 8.8.8.8）發出遞回查詢，RD=1 旗標表示「請幫我完成完整查詢」。`,
-      details:[
-        {k:'Dst IP',v:'8.8.8.8:53'},{k:'Protocol',v:'UDP'},
-        {k:'Query',v:`${host} A?`},{k:'RD Flag',v:'1 (Recursion Desired)'},
-        {k:'ID',v:'0x7A2C'},
-      ],
-      tech:'Recursive Resolver 優先查自己的快取。若 miss，才開始迭代查詢（Root → TLD → Auth）。DNS 通常使用 UDP，查詢回應超過 512 bytes 時才切換至 TCP。',
-      fail:null,
-      interview:'Recursive Resolver 是「代理人」模型的體現：客戶端只需一次 UDP 查詢，Resolver 負責完成所有迭代查詢。這讓 DNS 協議對客戶端非常輕量，同時讓 Resolver 有機會做快取優化。Google 的 8.8.8.8 和 Cloudflare 的 1.1.1.1 都是公共 Recursive DNS。',
-    },
-    {
-      id:'dns-root', stageIdx:1,
-      title:'Recursive → Root DNS', titleEN:'Query Root DNS',
-      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Iterative Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'recursive', to:'root', pkt:'.'+tld+' NS?', pktColor:'#3DD9C5',
-      activeNodes:['recursive','root'], activeEdges:['e-rt'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 20ms', kpiStatus:'REFERRAL',
-      what:`Recursive DNS 向 Root Name Server 查詢，Root 不知道 ${host} 的 IP，但會指向 .${tld} 的 TLD Name Server。`,
-      details:[
-        {k:'Root Server',v:'a.root-servers.net'},{k:'Query',v:host},
-        {k:'Response',v:`.${tld} TLD NS referral`},{k:'AA Flag',v:'0 (not authoritative)'},
-      ],
-      tech:`全球共 13 組 Root Server（A–M），透過 Anycast 技術部署 1,000+ 個實體節點，保障全球高可用。Root Server 只保存 TLD 的 NS 記錄，不存具體 A 記錄。`,
-      fail:null,
-      interview:'Root Server 的 IP 位址被「硬編碼」進每個 Recursive Resolver，稱為 Root Hints File。這些 IP 極少變動，若要更新需要全球 DNS 協調。Root Server 不回答「IP 是什麼」，只回答「去哪裡問 TLD」——體現了 DNS 分層委派的設計哲學。',
-    },
-    {
-      id:'dns-tld', stageIdx:1,
-      title:'Recursive → TLD DNS', titleEN:'Query TLD DNS',
-      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Iterative Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'recursive', to:'tld', pkt:domain+' NS?', pktColor:'#3DD9C5',
-      activeNodes:['recursive','tld'], activeEdges:['e-tl'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 30ms', kpiStatus:'REFERRAL',
-      what:`TLD Name Server 管理 .${tld} 下所有網域的委派記錄（NS Record），將 Recursive DNS 指向 ${domain} 的 Authoritative DNS。`,
-      details:[
-        {k:'TLD Server',v:`a.gtld-servers.net`},{k:'Query',v:host},
-        {k:'Response',v:`NS records for ${domain}`},
-        {k:'Delegation',v:`ns1.${domain}`},
-      ],
-      tech:`TLD Server 由各機構運營（Verisign 管 .com/.net，IANA 委託管其他 ccTLD）。它只保存 NS 記錄，不持有 A 記錄——這是 DNS 分層設計的核心：每層只知道「下一層在哪裡」。`,
-      fail:null,
-      interview:'TLD 委派機制讓 DNS 具備極高的可擴展性：全球數百萬個域名不需要集中管理，而是透過分層委派分散到各個 Authoritative DNS。這也是為什麼一個域名可以在不同地區有不同 IP（GeoDNS）——Authoritative DNS 可以根據查詢來源回應不同記錄。',
-    },
-    {
-      id:'dns-auth', stageIdx:1,
-      title:'Recursive → Auth DNS', titleEN:'Query Authoritative DNS',
-      protocol:'DNS (UDP/53)', layer:'Application', packetType:'Authoritative Query',
-      badgeClass: scenario==='dns-fail' ? 'b-error' : 'b-dns',
-      badgeText: scenario==='dns-fail' ? 'NXDOMAIN' : 'DNS',
-      from:'recursive', to:'auth',
-      pkt: scenario==='dns-fail' ? 'FAIL' : 'A Record?',
-      pktColor: scenario==='dns-fail' ? '#FF6B6B' : '#3DD9C5',
-      activeNodes:['recursive','auth'], activeEdges:['e-ra'],
-      kpiProto:'DNS/UDP', kpiLat:'~ 45ms', kpiStatus: scenario==='dns-fail' ? 'NXDOMAIN' : 'OK',
-      what:`Recursive DNS 向 ${domain} 的 Authoritative DNS 查詢最終 A 記錄。${scenario==='dns-fail' ? '❌ DNS 查詢失敗：此域名無對應記錄，回傳 NXDOMAIN。' : '這是 DNS 查詢鏈的終點，擁有最終答案。'}`,
-      details:[
-        {k:'Auth Server',v:`ns1.${domain}`},{k:'Query',v:`${host} A?`},
-        {k:'AA Flag',v:'1 (Authoritative Answer)'},
-        scenario==='dns-fail'
-          ? {k:'Response',v:'NXDOMAIN',c:'c-error'}
-          : {k:'Response',v:'93.184.216.34 (TTL 3600)'},
-      ],
-      tech:'只有 Authoritative DNS 的回應才帶有 AA=1 旗標，代表這是最終權威答案，而非快取。TTL 決定 Recursive Resolver 快取此記錄多久。',
-      fail: scenario==='dns-fail' ? 'NXDOMAIN（Non-Existent Domain）代表此域名無 A 記錄存在。瀏覽器將顯示「ERR_NAME_NOT_RESOLVED」，使用者看到「無法連接到此網站」。若你是維運人員，需要檢查域名是否正確設定 A/CNAME 記錄。' : null,
-      interview:'Authoritative DNS 是 DNS 查詢的真相來源。現代雲端服務（如 AWS Route 53、Cloudflare DNS）都提供 Authoritative DNS 服務，並支援 GeoDNS（地理定向）、健康檢查（自動切換 IP）等高級功能。這讓 DNS 不只是「查 IP」，也是流量調度的工具。',
-      isError: scenario==='dns-fail',
-    },
-    {
-      id:'dns-return', stageIdx:2,
-      title:'IP 位址回傳', titleEN:'IP Returned',
-      protocol:'DNS Response', layer:'Application', packetType:'DNS Response',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'resolver', to:'browser', pkt:'93.184…', pktColor:'#45D483',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
-      kpiProto:'DNS', kpiLat:'~ 50ms', kpiStatus:'RESOLVED',
-      what:`Recursive DNS 快取結果後，IP 逐層回傳。瀏覽器現在知道 ${host} 對應 IP 93.184.216.34，可以開始建立 TCP 連線。`,
-      details:[
-        {k:'Resolved IP',v:'93.184.216.34',c:'c-success'},{k:'TTL',v:'3600s'},
-        {k:'Record Type',v:'A'},{k:'Total DNS Time',v:'~50ms'},
-      ],
-      tech:'IP 快取至 OS Resolver（TTL=3600s）。DNS 解析總耗時通常 50–200ms，是影響 TTFB 的重要因素。後續 TTL 內的相同查詢直接命中快取，延遲降至 <1ms。',
-      fail:null,
-      interview:'DNS 解析時間是前端性能優化的關鍵指標。CDN 可以透過 GeoDNS 讓使用者連到最近的節點。DNS over HTTPS（DoH）和 DNS over TLS（DoT）是現代隱私強化方案，防止 ISP 監聽 DNS 查詢。',
-    },
-    ] : []),
+    ...dnsStepsBuilder(host, false, state.dnsMode),
     {
       id:'tcp-syn', stageIdx:3,
       title:'TCP SYN', titleEN:'TCP Handshake — SYN',
@@ -1840,12 +1603,12 @@ function drawTopology() {
   const nodesG = document.getElementById('svgNodes');
   edgesG.innerHTML=''; nodesG.innerHTML='';
 
-  // DNS zone indicator
-  const zone = svgEl('rect',{x:490,y:30,width:166,height:270,rx:12,
+  // DNS zone indicator (covers OS Resolver + Recursive)
+  const zone = svgEl('rect',{x:170,y:120,width:296,height:100,rx:12,
     fill:'none',stroke:'#2A3445',
-    'stroke-dasharray':'4 3','stroke-width':'1','opacity':'.6','id':'dnsZoneRect'});
+    'stroke-dasharray':'4 3','stroke-width':'1','opacity':'.5','id':'dnsZoneRect'});
   edgesG.appendChild(zone);
-  const zoneLabel = svgEl('text',{x:573,y:24,
+  const zoneLabel = svgEl('text',{x:318,y:114,
     'text-anchor':'middle','font-size':'8.5','font-weight':'600',
     'letter-spacing':'1','fill':'#2A3445','font-family':'JetBrains Mono,monospace','id':'dnsZoneLabel'});
   zoneLabel.textContent='DNS RESOLUTION';
