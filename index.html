@@ -288,6 +288,12 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .b-imap{background:rgba(45,212,191,.12);color:#2DD4BF;border:1px solid rgba(45,212,191,.28)}
 .b-pop3{background:rgba(251,113,133,.12);color:#FB7185;border:1px solid rgba(251,113,133,.28)}
 .b-snmp{background:rgba(129,140,248,.12);color:#818CF8;border:1px solid rgba(129,140,248,.28)}
+.b-ssh{background:rgba(56,189,248,.12);color:#38BDF8;border:1px solid rgba(56,189,248,.28)}
+.b-telnet{background:rgba(148,163,184,.12);color:#94A3B8;border:1px solid rgba(148,163,184,.28)}
+.b-ldap{background:rgba(244,114,182,.12);color:#F472B6;border:1px solid rgba(244,114,182,.28)}
+.b-echo{background:rgba(250,204,21,.12);color:#FACC15;border:1px solid rgba(250,204,21,.28)}
+.b-pptp{background:rgba(167,139,250,.12);color:#A78BFA;border:1px solid rgba(167,139,250,.28)}
+.b-udp{background:rgba(250,176,5,.12);color:#FAB005;border:1px solid rgba(250,176,5,.28)}
 
 .rp-body{padding:16px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1}
 
@@ -397,6 +403,11 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
         <option value="imap">📥 IMAP</option>
         <option value="pop3">📬 POP3</option>
         <option value="snmp">📊 SNMP</option>
+        <option value="ssh">🔐 SSH</option>
+        <option value="telnet">⌨️ Telnet</option>
+        <option value="ldap">🗂 LDAP</option>
+        <option value="echo">🔁 Echo</option>
+        <option value="pptp">🛡 PPTP</option>
       </select>
     </div>
     <div class="scenario-group">
@@ -565,6 +576,11 @@ const PROTOCOL_LABELS = {
   imap:     { browser:['Mail Client','MUA','📧'],       webserver:['IMAP Server','993/TLS','🗄'],      render:['Local Mailbox Cache','CACHE','💾'] },
   pop3:     { browser:['Mail Client','MUA','📧'],       webserver:['POP3 Server','995/TLS','📨'],      render:['Local Mailbox','STORE','💾'] },
   snmp:     { browser:['SNMP Manager','NMS','📡'],      webserver:['SNMP Agent','Device','🔧'],        render:['MIB Parser','Data','📊'] },
+  ssh:      { browser:['SSH Client','Terminal','💻'],   webserver:['SSH Server','sshd','🔐'],          render:['Encrypted Shell','PTY','⌨️'] },
+  telnet:   { browser:['Telnet Client','Terminal','⌨️'],webserver:['Telnet Server','telnetd','📟'],    render:['Plaintext Shell','PTY','🖥'] },
+  ldap:     { browser:['LDAP Client','App','🗂'],       webserver:['LDAP Server','slapd','🏛'],        render:['Directory Entries','DIT','📑'] },
+  echo:     { browser:['Echo Client','Tester','🔁'],    webserver:['Echo Server','port 7','🪞'],       render:['Verify Output','Match','✅'] },
+  pptp:     { browser:['VPN Client','Initiator','🛡'],  webserver:['VPN Concentrator','PNS','🏰'],     render:['Tunneled Network','GRE','🌐'] },
 };
 
 const DNS_ZONE_LABELS = {
@@ -610,13 +626,25 @@ const EDGES_DEF = [
 ];
 
 function getStages(p) {
-  if(p==='ftp')  return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
-  if(p==='smtp') return ['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
-  if(p==='imap') return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
-  if(p==='pop3') return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','POP3 Auth','Download','Complete'];
-  if(p==='snmp') return ['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
+  if(p==='ftp')    return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
+  if(p==='smtp')   return ['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
+  if(p==='imap')   return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
+  if(p==='pop3')   return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','POP3 Auth','Download','Complete'];
+  if(p==='snmp')   return ['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
+  if(p==='ssh')    return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Key Exchange','Authentication','Shell'];
+  if(p==='telnet') return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Negotiation','Login','Shell'];
+  if(p==='ldap')   return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','LDAP Bind','Search','Result'];
+  if(p==='echo')   return ['Target Parse','DNS Lookup','IP Resolved','UDP Send','UDP Echo','Verify','Complete'];
+  if(p==='pptp')   return ['URL Parse','DNS Lookup','IP Resolved','TCP Control','PPTP Setup','GRE Tunnel','Connected'];
   return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
 }
+
+// ─── TRANSPORT MAP (TCP vs UDP visualization) ──────────
+const TRANSPORT_MAP = {
+  https:'tcp', http:'tcp', ftp:'tcp', smtp:'tcp', imap:'tcp', pop3:'tcp',
+  ssh:'tcp', telnet:'tcp', ldap:'tcp', pptp:'tcp',
+  snmp:'udp', echo:'udp',
+};
 const STAGES = getStages('https');
 
 const TOOLTIP_DATA = {};
@@ -1383,13 +1411,481 @@ function buildSnmpSteps(scenario, host) {
   return S;
 }
 
+// ─── SHARED UDP DATAGRAM STEPS BUILDER ─────────────────
+function udpStepsBuilder(port, label, color){
+  color = color || '#FAB005';
+  return [
+    {
+      id:'udp-send', stageIdx:3,
+      title:'UDP Datagram 送出', titleEN:'UDP Send (no handshake)',
+      protocol:`UDP (port ${port})`, layer:'Transport', packetType:'Datagram',
+      badgeClass:'b-udp', badgeText:'UDP',
+      from:'browser', to:'webserver', pkt:label||'DGRAM', pktColor:color,
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'UDP', kpiLat:'< 1ms', kpiStatus:'SEND',
+      what:`UDP 不需三向交握，直接把資料報（Datagram）丟出去。輕量、無連線狀態，但不保證送達或順序。`,
+      details:[
+        {k:'Protocol',v:'UDP (connectionless)'},
+        {k:'Dst Port',v:String(port)},
+        {k:'Reliability',v:'best-effort（無 ACK / 無重傳）'},
+        {k:'Overhead',v:'8-byte header（vs TCP 20+ bytes）'},
+      ],
+      tech:'UDP 適合即時、可重試、容忍少量遺失的場景：DNS、SNMP、VoIP、線上遊戲、QUIC（UDP + 應用層可靠性）。',
+      fail:null,
+      interview:'TCP vs UDP 的核心取捨是「可靠性」vs「延遲與開銷」。UDP 沒有握手、沒有 ACK、沒有壅塞控制，因此更快但不可靠；應用層可在 UDP 之上自建可靠機制（QUIC 就是這麼做）。',
+    },
+  ];
+}
+
+// ─── SSH STEPS BUILDER ─────────────────────────────────
+function buildSshSteps(scenario, host){
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'解析 SSH 目標', titleEN:'SSH URL Parsing',
+      protocol:'SSH Client', layer:'Application', packetType:'URL Parse',
+      badgeClass:'b-ssh', badgeText:'SSH',
+      from:null, to:'browser', pkt:'URL', pktColor:'#38BDF8',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'SSH', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`客戶端解析 ssh://${host}，預設 port 22。SSH 提供加密的遠端登入、命令執行與檔案傳輸（透過 SFTP/SCP 子協定）。`,
+      details:[{k:'URL',v:'ssh://'+host},{k:'Port',v:'22'},{k:'Auth',v:'PublicKey / Password / Keyboard-Interactive'}],
+      tech:'SSH（RFC 4251）取代 Telnet/rlogin/rsh 等明文協定，提供端到端加密、伺服器身份驗證與多種認證機制。',
+      fail:null,
+      interview:'SSH 三層架構：Transport Layer（加密、伺服器認證）、User Authentication Layer、Connection Layer（多工通道）。SFTP 是跑在 SSH Connection Layer 上的子系統。',
+    },
+    ...dnsStepsBuilder(host, false, state.dnsMode),
+    ...tcpStepsBuilder(22, scenario),
+    {
+      id:'ssh-banner', stageIdx:4,
+      title:'SSH Banner 交換', titleEN:'SSH Version Exchange',
+      protocol:'SSH (port 22)', layer:'Application', packetType:'Banner',
+      badgeClass:'b-ssh', badgeText:'SSH',
+      from:'webserver', to:'browser', pkt:'SSH-2.0', pktColor:'#38BDF8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SSH', kpiLat:'~ 5ms', kpiStatus:'BANNER',
+      what:'TCP 連線建立後，雙方互相發送版本字串（"SSH-2.0-OpenSSH_9.6"），協商協議版本。',
+      details:[
+        {k:'Server',v:'SSH-2.0-OpenSSH_9.6'},
+        {k:'Client',v:'SSH-2.0-OpenSSH_9.6'},
+        {k:'Direction',v:'Server speaks first'},
+      ],
+      tech:'Banner 是純文字行（以 \\r\\n 結尾），先於任何加密。Banner 常被用於指紋識別與弱版本掃描。',
+      fail:null,
+      interview:'SSH Banner Grabbing 是滲透測試的基本步驟，可識別 OpenSSH 版本、推斷 OS。Hardening 建議改寫 Banner 或關閉版本字串顯示。',
+    },
+    {
+      id:'ssh-kex', stageIdx:4,
+      title:'金鑰交換 (KEX)', titleEN:'Key Exchange (Diffie-Hellman)',
+      protocol:'SSH KEX', layer:'Application', packetType:'KEXINIT',
+      badgeClass:'b-ssh', badgeText:'SSH',
+      from:'browser', to:'webserver', pkt:'KEX', pktColor:'#38BDF8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SSH', kpiLat:'~ 30ms', kpiStatus:'KEX',
+      what:'雙方交換 KEXINIT 列出支援的演算法，挑出最強共同集合，再以 Diffie-Hellman 派生對稱會話金鑰。伺服器同時送出 host key 供客戶端驗證身份（known_hosts）。',
+      details:[
+        {k:'KEX',v:'curve25519-sha256'},
+        {k:'Cipher',v:'chacha20-poly1305@openssh.com'},
+        {k:'MAC',v:'hmac-sha2-256-etm@openssh.com'},
+        {k:'HostKey',v:'ssh-ed25519 (fingerprint pinned)',c:'c-success'},
+      ],
+      tech:'KEX 完成後流量切換到加密通道（NEWKEYS）。host key 驗證防 MITM：客戶端把伺服器公鑰指紋與 ~/.ssh/known_hosts 比對。',
+      fail:null,
+      interview:'SSH 安全的兩個錨點：1) host key 驗證確保「對的伺服器」（防 MITM）；2) 用戶認證（多半是 publickey）確保「對的使用者」。known_hosts 第一次連線是 TOFU（信任先行）模型。',
+    },
+    {
+      id:'ssh-auth', stageIdx:5,
+      title:'使用者認證', titleEN:'User Authentication',
+      protocol:'SSH Auth', layer:'Application', packetType:'USERAUTH',
+      badgeClass: scenario==='auth-fail'?'b-error':'b-ssh',
+      badgeText: scenario==='auth-fail'?'AUTH FAIL':'SSH',
+      from:'browser', to:'webserver', pkt:'AUTH', pktColor:'#38BDF8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'SSH', kpiLat:'~ 50ms', kpiStatus: scenario==='auth-fail'?'AUTH FAIL':'AUTHENTICATED',
+      what: scenario==='auth-fail'
+        ? '客戶端嘗試以 publickey / password 認證，但伺服器拒絕（公鑰未在 authorized_keys、密碼錯誤、或帳號被鎖）。'
+        : '客戶端優先嘗試 publickey 認證：以私鑰簽署挑戰，伺服器以 ~/.ssh/authorized_keys 中的公鑰驗證簽章。',
+      details: scenario==='auth-fail'
+        ? [{k:'Method',v:'publickey'},{k:'Result',v:'Permission denied (publickey)',c:'c-error'}]
+        : [{k:'Method',v:'publickey'},{k:'Algorithm',v:'ssh-ed25519'},{k:'Result',v:'Accepted',c:'c-success'}],
+      tech:'SSH 認證可配置順序：publickey > keyboard-interactive > password。Hardening 建議停用 PasswordAuthentication 與 PermitRootLogin。',
+      fail: scenario==='auth-fail'?'SSH 認證失敗。檢查公鑰是否寫入伺服器 authorized_keys、權限（700/600）、SELinux context、或 sshd PasswordAuthentication 設定。':null,
+      interview:'SSH key-based auth 比密碼安全得多：私鑰不離開客戶端、無法暴力破解（前提：金鑰 passphrase + 妥善保管）。配合 ssh-agent 可避免反覆輸入 passphrase。',
+      isError: scenario==='auth-fail',
+    },
+    {
+      id:'ssh-shell', stageIdx:6,
+      title:'互動 Shell 啟動', titleEN:'Interactive Shell Session',
+      protocol:'SSH Connection', layer:'Application', packetType:'PTY+Shell',
+      badgeClass:'b-ssh', badgeText:'SSH',
+      from:'webserver', to:'render', pkt:'$', pktColor:'#45D483',
+      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
+      kpiProto:'SSH', kpiLat:'~5ms', kpiStatus:'CONNECTED',
+      what:'客戶端開啟 channel，請求 PTY（pseudo-terminal）並啟動 shell。後續所有鍵盤輸入與螢幕輸出都透過此加密通道傳輸。',
+      details:[
+        {k:'Channel',v:'session #0'},
+        {k:'Request',v:'pty-req + shell'},
+        {k:'TERM',v:'xterm-256color'},
+        {k:'Multiplex',v:'同一條連線可開多個 channel'},
+      ],
+      tech:'SSH Connection Layer 支援多工：一條 TCP 連線可承載 shell、port forwarding（-L/-R/-D）、SFTP、agent forwarding 等多個 channel。',
+      fail:null,
+      interview:'SSH port forwarding 是 DevOps 神器：-L 本地轉發（穿透防火牆連內網服務）、-R 反向轉發（內網對外暴露服務）、-D 動態 SOCKS proxy。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  return S;
+}
+
+// ─── TELNET STEPS BUILDER ──────────────────────────────
+function buildTelnetSteps(scenario, host){
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'解析 Telnet 目標', titleEN:'Telnet URL Parsing',
+      protocol:'Telnet Client', layer:'Application', packetType:'URL Parse',
+      badgeClass:'b-telnet', badgeText:'TELNET',
+      from:null, to:'browser', pkt:'URL', pktColor:'#94A3B8',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'TELNET', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`客戶端解析 telnet://${host}，預設 port 23。Telnet 是最古老的遠端登入協定（RFC 854，1983），全程明文，現代環境僅用於除錯網路設備或測試 TCP port。`,
+      details:[{k:'URL',v:'telnet://'+host},{k:'Port',v:'23'},{k:'Encryption',v:'❌ 無（plaintext）'}],
+      tech:'Telnet 是 SSH 出現前的標準遠端登入工具，仍廣泛存在於老舊網路設備（路由器、交換器、IoT）。',
+      fail:null,
+      interview:'Telnet 在 production 已被 SSH 取代。但 telnet 指令本身仍是測試任意 TCP port 是否開啟的便利工具（如 telnet host 80）。',
+    },
+    ...dnsStepsBuilder(host, false, state.dnsMode),
+    ...tcpStepsBuilder(23, scenario),
+    {
+      id:'telnet-banner', stageIdx:4,
+      title:'伺服器登入提示', titleEN:'Telnet Login Prompt',
+      protocol:'Telnet (port 23)', layer:'Application', packetType:'Banner',
+      badgeClass:'b-telnet', badgeText:'TELNET',
+      from:'webserver', to:'browser', pkt:'login:', pktColor:'#94A3B8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TELNET', kpiLat:'~ 5ms', kpiStatus:'BANNER',
+      what:'伺服器送出歡迎訊息與 login: 提示。整個交握過程未經加密，封包擷取即可看到完整內容。',
+      details:[{k:'Banner',v:'Welcome to RouterOS v7.x'},{k:'Prompt',v:'login:'},{k:'Encryption',v:'NONE',c:'c-error'}],
+      tech:'Telnet Banner 常洩漏設備型號與韌體版本，是滲透測試常見資訊收集點。',
+      fail:null,
+      interview:'Banner Grabbing 是 nmap -sV 的核心動作之一：透過 Banner 識別服務種類與版本，進而比對 CVE 資料庫。',
+    },
+    {
+      id:'telnet-nego', stageIdx:4,
+      title:'Telnet 選項協商', titleEN:'Telnet Option Negotiation',
+      protocol:'Telnet IAC', layer:'Application', packetType:'IAC DO/WILL',
+      badgeClass:'b-telnet', badgeText:'TELNET',
+      from:'browser', to:'webserver', pkt:'IAC', pktColor:'#94A3B8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TELNET', kpiLat:'~ 8ms', kpiStatus:'NEGOTIATE',
+      what:'雙方使用 IAC（Interpret As Command, 0xFF）字節協商選項：Echo、Suppress Go Ahead、Terminal Type 等。',
+      details:[
+        {k:'IAC WILL ECHO',v:'0xFF 0xFB 0x01'},
+        {k:'IAC DO SGA',v:'0xFF 0xFD 0x03'},
+        {k:'TERM',v:'xterm'},
+      ],
+      tech:'Telnet 選項協商使用 WILL/WONT/DO/DONT 四種命令字節，確認雙方對齊終端機行為（Echo、行模式 vs 字元模式等）。',
+      fail:null,
+      interview:'Echo 選項決定誰負責回顯：本地 Echo 適合行模式（如 Linux login），遠端 Echo 適合字元模式（如 vi）。',
+    },
+    {
+      id:'telnet-login', stageIdx:5,
+      title:'明文帳密登入', titleEN:'Plaintext Login',
+      protocol:'Telnet', layer:'Application', packetType:'Credentials',
+      badgeClass: scenario==='auth-fail'?'b-error':'b-telnet',
+      badgeText: scenario==='auth-fail'?'LOGIN FAIL':'TELNET',
+      from:'browser', to:'webserver', pkt:'PASS', pktColor:'#94A3B8',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TELNET', kpiLat:'~ 30ms', kpiStatus: scenario==='auth-fail'?'LOGIN FAIL':'LOGGED IN',
+      what: scenario==='auth-fail'
+        ? '帳密以「明文」傳送，伺服器拒絕。任何在路徑上的中間人（或 ARP spoofing 攻擊者）都已經拿到憑證副本。'
+        : '客戶端逐字傳送帳號與密碼，伺服器比對 /etc/passwd（或設備本機帳號）後允許登入。所有字元都明文走在線上。',
+      details: scenario==='auth-fail'
+        ? [{k:'login',v:'admin'},{k:'password',v:'(plaintext over wire)'},{k:'Result',v:'Login incorrect',c:'c-error'}]
+        : [{k:'login',v:'admin'},{k:'password',v:'(plaintext over wire)',c:'c-error'},{k:'Result',v:'Last login: ...',c:'c-success'}],
+      tech:'tcpdump / Wireshark 對 Telnet 流量過濾即可看到完整帳密。1990 年代知名的 Sniffer 攻擊有大半針對 Telnet。',
+      fail: scenario==='auth-fail'?'Telnet 登入失敗。但更嚴重的是，失敗的帳密同樣以明文走在網路上，等同公開廣播。立即停用 Telnet，改用 SSH。':null,
+      interview:'從合規角度，PCI-DSS / NIST 800-53 / ISO 27001 都禁止使用 Telnet 處理任何含敏感資料的場景。網路設備若僅支援 Telnet 管理應透過 jumphost 或 out-of-band 管理。',
+      isError: scenario==='auth-fail',
+    },
+    {
+      id:'telnet-shell', stageIdx:6,
+      title:'遠端 Shell（明文）', titleEN:'Remote Shell (Cleartext)',
+      protocol:'Telnet', layer:'Application', packetType:'Shell I/O',
+      badgeClass:'b-telnet', badgeText:'TELNET',
+      from:'webserver', to:'render', pkt:'$', pktColor:'#45D483',
+      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
+      kpiProto:'TELNET', kpiLat:'~5ms', kpiStatus:'CONNECTED',
+      what:'登入後鍵盤輸入與螢幕輸出全程明文走在 TCP 連線上。',
+      details:[{k:'Stream',v:'plaintext bidirectional'},{k:'Risk',v:'Sniffable / MITMable',c:'c-error'}],
+      tech:'此情境只應出現在隔離實驗室或 OOB 管理網路。任何穿越公網的 Telnet 等同於把根密碼貼在路燈上。',
+      fail:null,
+      interview:'若必須使用 Telnet（例如老舊設備），請限制來源 IP、走 VPN、或透過 SSH bastion 跳板。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  return S;
+}
+
+// ─── LDAP STEPS BUILDER ────────────────────────────────
+function buildLdapSteps(scenario, host){
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'解析 LDAP URL', titleEN:'LDAP URL Parsing',
+      protocol:'LDAP Client', layer:'Application', packetType:'URL Parse',
+      badgeClass:'b-ldap', badgeText:'LDAP',
+      from:null, to:'browser', pkt:'URL', pktColor:'#F472B6',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'LDAP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`客戶端解析 ldap://${host}，預設 port 389（或 ldaps:// 636 加密版本）。LDAP 用於存取階層式目錄資料（人員、部門、群組、設備）。`,
+      details:[
+        {k:'URL',v:'ldap://'+host+'/dc=example,dc=com'},
+        {k:'Port',v:'389 (StartTLS) / 636 (LDAPS)'},
+        {k:'BaseDN',v:'dc=example,dc=com'},
+      ],
+      tech:'LDAP（RFC 4511）是 X.500 的輕量化版本。Active Directory、OpenLDAP、389 Directory Server 都實作此協定。',
+      fail:null,
+      interview:'LDAP 是企業 SSO 與帳號管理的中樞：應用透過 LDAP Bind 驗證使用者，避免每個系統各自管理密碼。AD 同時也是 LDAP 伺服器（port 389/636）。',
+    },
+    ...dnsStepsBuilder(host, false, state.dnsMode),
+    ...tcpStepsBuilder(389, scenario),
+    {
+      id:'ldap-bind', stageIdx:4,
+      title:'LDAP Bind — 認證', titleEN:'LDAP Bind Operation',
+      protocol:'LDAP (port 389)', layer:'Application', packetType:'BindRequest',
+      badgeClass: scenario==='auth-fail'?'b-error':'b-ldap',
+      badgeText: scenario==='auth-fail'?'BIND FAIL':'LDAP',
+      from:'browser', to:'webserver', pkt:'BIND', pktColor:'#F472B6',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'LDAP', kpiLat:'~ 15ms', kpiStatus: scenario==='auth-fail'?'INVALID CREDENTIALS':'BOUND',
+      what: scenario==='auth-fail'
+        ? '客戶端送出 Bind Request（DN + 密碼），伺服器比對失敗回傳 invalidCredentials (49)。'
+        : '客戶端送出 Bind Request：以 DN（Distinguished Name）與密碼（或 SASL 機制）向伺服器表明身份。Bind 成功後才能執行後續操作。',
+      details: scenario==='auth-fail'
+        ? [{k:'BindDN',v:'cn=admin,dc=example,dc=com'},{k:'Method',v:'simple'},{k:'Result',v:'invalidCredentials (49)',c:'c-error'}]
+        : [{k:'BindDN',v:'cn=admin,dc=example,dc=com'},{k:'Method',v:'simple / SASL'},{k:'Result',v:'success (0)',c:'c-success'}],
+      tech:'Anonymous Bind（空 DN + 空密碼）若被允許，攻擊者可列舉目錄結構。Hardening 建議 disallow anonymous bind 並強制 LDAPS / StartTLS。',
+      fail: scenario==='auth-fail'?'LDAP Bind 失敗（invalidCredentials）。檢查 BindDN 拼寫、密碼是否過期、帳號是否被鎖定（pwdAccountLockedTime）。簡單 bind 走 port 389 時為明文，建議改用 LDAPS（636）或 StartTLS。':null,
+      interview:'LDAP Bind 是大量 SSO 系統的認證後端。LDAP Injection（未過濾使用者輸入直接拼接 filter）是 OWASP Top 10 等級的漏洞，等同 SQL Injection。',
+      isError: scenario==='auth-fail',
+    },
+    {
+      id:'ldap-search', stageIdx:5,
+      title:'LDAP Search — 查詢', titleEN:'LDAP Search Operation',
+      protocol:'LDAP', layer:'Application', packetType:'SearchRequest',
+      badgeClass:'b-ldap', badgeText:'LDAP',
+      from:'browser', to:'webserver', pkt:'SEARCH', pktColor:'#F472B6',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'LDAP', kpiLat:'~ 20ms', kpiStatus:'SEARCHING',
+      what:'客戶端送出 SearchRequest，指定 BaseDN、Scope、Filter 與要回傳的屬性。',
+      details:[
+        {k:'BaseDN',v:'ou=users,dc=example,dc=com'},
+        {k:'Scope',v:'subtree (wholeSubtree)'},
+        {k:'Filter',v:'(&(objectClass=person)(uid=alice))'},
+        {k:'Attrs',v:'cn, mail, memberOf'},
+      ],
+      tech:'LDAP Filter 採前綴運算式：(&(A=1)(B=2)) = AND；(|(...)(...)) = OR；(!(...)) = NOT。索引設計直接影響查詢效能。',
+      fail:null,
+      interview:'LDAP Filter Injection：若程式碼直接拼接使用者輸入到 filter，攻擊者可注入 *)(uid=*) 等模式繞過認證。永遠對輸入做 ESC 處理（RFC 4515）。',
+    },
+    {
+      id:'ldap-result', stageIdx:6,
+      title:'結果回傳', titleEN:'Search Result Entries',
+      protocol:'LDAP', layer:'Application', packetType:'SearchResultEntry',
+      badgeClass:'b-ldap', badgeText:'LDAP',
+      from:'webserver', to:'render', pkt:'ENTRIES', pktColor:'#45D483',
+      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
+      kpiProto:'LDAP', kpiLat:'~25ms', kpiStatus:'COMPLETE',
+      what:'伺服器回傳一個或多個 SearchResultEntry，最後以 SearchResultDone（含結果碼 0=success）結束。',
+      details:[
+        {k:'dn',v:'uid=alice,ou=users,dc=example,dc=com'},
+        {k:'cn',v:'Alice Wang'},
+        {k:'mail',v:'alice@example.com',c:'c-success'},
+        {k:'memberOf',v:'cn=engineers,ou=groups,...'},
+      ],
+      tech:'LDAP 回應是流式的：每筆 Entry 一個 PDU，最後一個 SearchResultDone 標示結束。客戶端可用 paged results 控制大集合。',
+      fail:null,
+      interview:'LDAP referral（指引）：當查詢的 DN 不在本伺服器，回應可能是 referral，把客戶端導向另一台伺服器。AD 多 forest 環境常見此行為。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  return S;
+}
+
+// ─── ECHO STEPS BUILDER (UDP) ──────────────────────────
+function buildEchoSteps(scenario, host){
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'設定 Echo 測試目標', titleEN:'Echo Target Configuration',
+      protocol:'Echo Client', layer:'Application', packetType:'Target Parse',
+      badgeClass:'b-echo', badgeText:'ECHO',
+      from:null, to:'browser', pkt:'TGT', pktColor:'#FACC15',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'ECHO', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`Echo 服務（RFC 862，port 7）會把收到的封包原封不動回傳，是最古老的網路連通性測試工具之一。Echo 同時定義了 TCP 與 UDP 版本，本流程使用 UDP，無連線、無握手。`,
+      details:[{k:'Target',v:host},{k:'Port',v:'7/UDP'},{k:'Payload',v:'"PING-12345"'}],
+      tech:'Echo 服務在現代主機預設關閉，因為缺乏存取控制可被當作 DDoS 反射放大攻擊跳板。但其概念衍生出 ICMP echo（ping）與 traceroute 中的 UDP probe。',
+      fail:null,
+      interview:'Echo / Chargen 等老舊診斷服務（RFC 862/864）若被開啟，可被用來做反射式 DDoS（攻擊者偽造受害者 IP，向 Echo server 發送請求，回應全部打到受害者）。一律建議關閉。',
+    },
+    ...dnsStepsBuilder(host, false, state.dnsMode),
+    ...udpStepsBuilder(7, 'PING', '#FACC15'),
+    {
+      id:'udp-echo', stageIdx:4,
+      title:'伺服器原樣回傳', titleEN:'Echo Server Mirrors Payload',
+      protocol:'UDP Echo', layer:'Application', packetType:'Datagram',
+      badgeClass:'b-echo', badgeText:'ECHO',
+      from:'webserver', to:'browser', pkt:'PING', pktColor:'#FACC15',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'UDP', kpiLat:'~ 8ms', kpiStatus:'ECHOED',
+      what:'Echo 伺服器收到 UDP datagram 後，把 payload 原封不動回傳。沒有任何狀態，不維護 session。',
+      details:[
+        {k:'Received',v:'"PING-12345"'},
+        {k:'Sent back',v:'"PING-12345"'},
+        {k:'No state',v:'connectionless / stateless'},
+      ],
+      tech:'Echo 是 stateless service 的教科書範例：每個 datagram 獨立處理，伺服器不需任何記憶體狀態。這也是它能被當反射攻擊跳板的原因。',
+      fail:null,
+      interview:'UDP 沒有連線概念，每個 datagram 都是獨立的。應用層（如 QUIC、DTLS、SIP）若需要會話狀態，必須自行在資料中標記。',
+    },
+    {
+      id:'echo-verify', stageIdx:5,
+      title:'比對回傳內容', titleEN:'Verify Echo Match',
+      protocol:'Echo Client', layer:'Application', packetType:'Verify',
+      badgeClass:'b-echo', badgeText:'ECHO',
+      from:'browser', to:'browser', pkt:'OK', pktColor:'#45D483',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'ECHO', kpiLat:'< 1ms', kpiStatus:'VERIFIED',
+      what:'客戶端比對發送與收到的 payload，一致即代表單向往返路徑通暢、且封包未被竄改（在不可信網路上仍應結合 HMAC）。',
+      details:[
+        {k:'Sent',v:'PING-12345'},
+        {k:'Received',v:'PING-12345',c:'c-success'},
+        {k:'Match',v:'YES',c:'c-success'},
+        {k:'RTT',v:'~8ms'},
+      ],
+      tech:'類似的 RTT 量測在生產環境多用 ICMP echo（ping）或應用層心跳；UDP echo 在嵌入式測試與 lab 仍偶爾使用。',
+      fail:null,
+      interview:'Echo 是「最簡單也最危險」的服務之一，常出現在 CTF 與滲透測試中。線上若看到 port 7 開啟，幾乎都是設定錯誤或誘餌。',
+    },
+    {
+      id:'render', stageIdx:6,
+      title:'測試結果展示', titleEN:'Display Test Result',
+      protocol:'Echo Client', layer:'Application', packetType:'Display',
+      badgeClass:'b-echo', badgeText:'ECHO',
+      from:'browser', to:'render', pkt:'✓', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'ECHO', kpiLat:'~10ms', kpiStatus:'COMPLETE',
+      what:'測試工具把成功訊息與 RTT 顯示在 UI 上。',
+      details:[{k:'Status',v:'OK',c:'c-success'},{k:'RTT',v:'~8ms'},{k:'Loss',v:'0/1'}],
+      tech:'真實診斷流程通常會發送多個 datagram（如 ping -c 10）統計 min/avg/max/loss。',
+      fail:null,
+      interview:'網路診斷的順序：1) 本地（lo）→ 2) 預設閘道 → 3) 跨網段 → 4) DNS → 5) 應用層。Echo 與 ping 屬於 1-3 層的存活檢測。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  return S;
+}
+
+// ─── PPTP STEPS BUILDER ────────────────────────────────
+function buildPptpSteps(scenario, host){
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'解析 PPTP 目標', titleEN:'PPTP URL Parsing',
+      protocol:'PPTP Client', layer:'Application', packetType:'URL Parse',
+      badgeClass:'b-pptp', badgeText:'PPTP',
+      from:null, to:'browser', pkt:'URL', pktColor:'#A78BFA',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'PPTP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`客戶端解析 pptp://${host}，使用 TCP 1723（控制通道）+ GRE protocol 47（資料通道）。PPTP 是早期 VPN 協定，因 MS-CHAPv2 弱點現在已不安全，僅作為教學示範。`,
+      details:[{k:'URL',v:'pptp://'+host},{k:'Control',v:'TCP 1723'},{k:'Data',v:'IP protocol 47 (GRE)'}],
+      tech:'PPTP（RFC 2637）是 PPP 的隧道延伸：把 PPP frame 包進 GRE，再走 IP 層。設計簡單但密碼學早已過時。',
+      fail:null,
+      interview:'PPTP 不再是建議的 VPN 協定。現代選擇：WireGuard（最簡潔現代）、IKEv2/IPsec（行動裝置友善）、OpenVPN（成熟、跨平台）。L2TP/IPsec 也比 PPTP 安全得多。',
+    },
+    ...dnsStepsBuilder(host, false, state.dnsMode),
+    ...tcpStepsBuilder(1723, scenario),
+    {
+      id:'pptp-control', stageIdx:4,
+      title:'PPTP 控制連線', titleEN:'PPTP Control Connection',
+      protocol:'PPTP (TCP 1723)', layer:'Application', packetType:'Start-Control-Connection',
+      badgeClass:'b-pptp', badgeText:'PPTP',
+      from:'browser', to:'webserver', pkt:'SCCRQ', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'PPTP', kpiLat:'~ 20ms', kpiStatus:'CONTROL UP',
+      what:'TCP 連線建立後，客戶端送出 Start-Control-Connection-Request（SCCRQ），伺服器回 SCCRP。控制通道用於建立、維持、拆除隧道。',
+      details:[
+        {k:'C→S',v:'SCCRQ (Start-Control-Connection-Request)'},
+        {k:'S→C',v:'SCCRP (Reply, result_code=1 OK)',c:'c-success'},
+        {k:'Protocol Ver',v:'1.0'},
+      ],
+      tech:'PPTP 控制訊息用 TCP 確保可靠性（命令不能丟）；資料則走 GRE 以避免 TCP-over-TCP 帶來的 meltdown 問題。',
+      fail:null,
+      interview:'TCP-over-TCP 問題：把 TCP 隧道在 TCP 上會導致兩層重傳互相干擾，加劇延遲。PPTP/L2TP/OpenVPN-UDP/WireGuard 都用 UDP 或 IP-level（GRE）作為資料層原因在此。',
+    },
+    {
+      id:'pptp-setup', stageIdx:5,
+      title:'PPP 認證 + 加密協商', titleEN:'PPP Auth & MPPE Setup',
+      protocol:'PPP (over PPTP)', layer:'Application', packetType:'LCP/CHAP/MPPE',
+      badgeClass: scenario==='auth-fail'?'b-error':'b-pptp',
+      badgeText: scenario==='auth-fail'?'AUTH FAIL':'PPTP',
+      from:'browser', to:'webserver', pkt:'CHAP', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'PPP', kpiLat:'~ 50ms', kpiStatus: scenario==='auth-fail'?'AUTH FAIL':'TUNNEL READY',
+      what: scenario==='auth-fail'
+        ? 'PPP CHAP 認證失敗。伺服器回 CHAP Failure，控制連線拆除。'
+        : '建立隧道前先進行 PPP LCP（Link Control Protocol）協商，再進行 MS-CHAPv2 認證，最後協商 MPPE（Microsoft Point-to-Point Encryption）金鑰。',
+      details: scenario==='auth-fail'
+        ? [{k:'Auth',v:'MS-CHAPv2'},{k:'Result',v:'CHAP Failure',c:'c-error'}]
+        : [{k:'LCP',v:'auth=MS-CHAPv2, MRU=1500'},{k:'CHAP',v:'Success',c:'c-success'},{k:'MPPE',v:'128-bit RC4'}],
+      tech:'MS-CHAPv2 + MPPE 已被研究證實可在數小時內被破解（Marlinspike 2012），整個 PPTP 加密體系因此被視為不安全。',
+      fail: scenario==='auth-fail'?'PPTP 認證失敗。但即使成功，PPTP/MS-CHAPv2 也已被攻破（chapcrack + cloudcracker）。應立刻遷移到 WireGuard 或 IKEv2。':null,
+      interview:'VPN 選型：個人/團隊用 WireGuard（簡單、快、現代密碼）；企業混合場景常見 IKEv2/IPsec（與 Windows/iOS/Android 原生整合）；雲端 site-to-site 多用 IPsec。PPTP 唯一場景是和老舊裝置相容性測試。',
+      isError: scenario==='auth-fail',
+    },
+    {
+      id:'pptp-gre', stageIdx:6,
+      title:'GRE 隧道資料傳輸', titleEN:'GRE Tunnel Data Flow',
+      protocol:'GRE (IP proto 47)', layer:'Network', packetType:'Encapsulated',
+      badgeClass:'b-pptp', badgeText:'PPTP',
+      from:'webserver', to:'render', pkt:'GRE', pktColor:'#45D483',
+      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
+      kpiProto:'GRE', kpiLat:'~10ms', kpiStatus:'TUNNELED',
+      what:'隧道建立後，客戶端的 IP 封包被加密（MPPE）後封裝進 GRE，再走外層 IP 送到 PPTP Server，伺服器解封裝後轉發到內網。',
+      details:[
+        {k:'Outer',v:'IP / GRE (proto 47)'},
+        {k:'Inner',v:'PPP / IP (encrypted)'},
+        {k:'Tunnel ID',v:'12345'},
+        {k:'Internal IP',v:'10.0.0.42 (assigned by PNS)'},
+      ],
+      tech:'PPTP 使用「強化版 GRE」（RFC 2637 §4），加入 sequence number 與 acknowledgement，但仍非可靠傳輸。GRE 不走 TCP/UDP，因此會被某些 NAT 與防火牆擋住（需要 PPTP Passthrough）。',
+      fail:null,
+      interview:'GRE 不走 port 概念，CGNAT 環境常無法穿越。這是 PPTP 在行動網路下不穩的另一個原因。WireGuard 走 UDP/single-port，NAT 友善得多。',
+      isLast:true,
+    },
+  ];
+  if(scenario==='dns-fail') return truncateDnsFail(S);
+  return S;
+}
+
 // ─── STEP DEFINITIONS ──────────────────────────────────
 function buildSteps(scenario, host, protocol) {
-  if(protocol==='ftp')  return buildFtpSteps(scenario, host);
-  if(protocol==='smtp') return buildSmtpSteps(scenario, host);
-  if(protocol==='imap') return buildImapSteps(scenario, host);
-  if(protocol==='pop3') return buildPop3Steps(scenario, host);
-  if(protocol==='snmp') return buildSnmpSteps(scenario, host);
+  if(protocol==='ftp')    return buildFtpSteps(scenario, host);
+  if(protocol==='smtp')   return buildSmtpSteps(scenario, host);
+  if(protocol==='imap')   return buildImapSteps(scenario, host);
+  if(protocol==='pop3')   return buildPop3Steps(scenario, host);
+  if(protocol==='snmp')   return buildSnmpSteps(scenario, host);
+  if(protocol==='ssh')    return buildSshSteps(scenario, host);
+  if(protocol==='telnet') return buildTelnetSteps(scenario, host);
+  if(protocol==='ldap')   return buildLdapSteps(scenario, host);
+  if(protocol==='echo')   return buildEchoSteps(scenario, host);
+  if(protocol==='pptp')   return buildPptpSteps(scenario, host);
 
   const isHttps = protocol==='https';
   const port = isHttps ? 443 : 80;
@@ -1576,6 +2072,23 @@ const BEGINNER_ANALOGIES = {
   'pop3-retr':       '📥 比喻：你把所有新信下載回自己的電腦，伺服器上的副本通常會被刪除。',
   'snmp-get':        '📡 比喻：管理員問交換器「你開機多久了？」',
   'snmp-response':   '📊 比喻：交換器回傳數字（例如：1234567 個百分秒）。',
+  'ssh-banner':      '👋 比喻：SSH 伺服器先打招呼並亮出版本：「我是 OpenSSH_9.x」。',
+  'ssh-kex':         '🔐 比喻：兩邊在大庭廣眾下協商出一把只有彼此知道的密鑰（Diffie-Hellman）。',
+  'ssh-auth':        '🪪 比喻：你出示金鑰（公私鑰）或密碼，伺服器確認你的身份。',
+  'ssh-shell':       '💻 比喻：登入成功，畫面跑出提示符 — 你已經坐在遠端那台機器前。',
+  'telnet-banner':   '📟 比喻：Telnet 伺服器直接回應，連加密都沒有，全程明文。',
+  'telnet-nego':     '⚙️ 比喻：雙方協商「要不要回顯？要不要彩色？」這些終端機選項。',
+  'telnet-login':    '🔓 比喻：你輸入帳號密碼 — 但這些字在網路上是「裸奔」的。',
+  'telnet-shell':    '🖥 比喻：登入成功，可以下指令，但任何竊聽者都看得一清二楚。',
+  'ldap-bind':       '🔑 比喻：你向「目錄總機」自我介紹（綁定 DN + 密碼），證明你是誰。',
+  'ldap-search':     '🔍 比喻：你說「幫我找 ou=users 底下姓王的人」，伺服器翻索引給你。',
+  'ldap-result':     '📑 比喻：總機把符合條件的人事資料一筆筆送回來。',
+  'udp-send':        '📨 比喻：UDP 像寄明信片 — 直接丟到郵筒，不用先打招呼建連線。',
+  'udp-echo':        '🪞 比喻：對方收到後把你的訊息原封不動「鏡射」回來，用來驗證鏈路通了。',
+  'echo-verify':     '✅ 比喻：你比對寄出與收到的內容，一致就代表這條路是通的。',
+  'pptp-control':    '🛡 比喻：先建一條「控制電話線」（TCP 1723）告訴對方要開隧道。',
+  'pptp-setup':      '🔧 比喻：雙方協商加密與隧道參數，準備把 IP 封包包進信封。',
+  'pptp-gre':        '🚇 比喻：GRE 像一條地下隧道，把整個 IP 封包再裝進另一個封包寄出去。',
 };
 
 function applyAnalogies(S){
@@ -1620,7 +2133,7 @@ function drawTopology() {
     let path;
     if(e.curved){
       path = svgEl('path',{
-        'd':`M ${from.cx},${from.cy+25} C ${from.cx},330 ${to.cx},330 ${to.cx},${to.cy+25}`,
+        'd':`M ${from.cx},${from.cy-25} C ${from.cx},40 ${to.cx},40 ${to.cx},${to.cy-25}`,
         'class':'e-path e-dashed','id':e.id
       });
     } else {
@@ -1710,44 +2223,46 @@ function resetAllVisuals() {
   document.getElementById('svgPacket').innerHTML='';
 }
 
-// ─── TCP HANDSHAKE INSET (sequence diagram) ────────────
+// ─── TRANSPORT INSET (TCP handshake / UDP datagram) ────
+const INSET_X=240, INSET_Y=222, INSET_W=320, INSET_H=110;
+const INSET_LX=INSET_X+50, INSET_RX=INSET_X+INSET_W-50;
+
 function ensureTcpInset(){
   const svg=document.getElementById('topSvg');
   if(!svg || document.getElementById('tcpInset')) return;
-  const X=240,Y=222,W=320,H=110, lx=X+50, rx=X+W-50;
   const g=svgEl('g',{id:'tcpInset'});
-  g.appendChild(svgEl('rect',{x:X,y:Y,width:W,height:H,rx:10,
+  g.appendChild(svgEl('rect',{x:INSET_X,y:INSET_Y,width:INSET_W,height:INSET_H,rx:10,
     fill:'rgba(20,28,42,0.55)',stroke:'#2A3445','stroke-width':'1','stroke-dasharray':'3 2'}));
-  const title=svgEl('text',{x:X+W/2,y:Y+15,'text-anchor':'middle',
+  const title=svgEl('text',{x:INSET_X+INSET_W/2,y:INSET_Y+15,'text-anchor':'middle',
     'font-size':'9','font-weight':'700','letter-spacing':'1.5',
     fill:'#94A3B8','font-family':'JetBrains Mono,monospace'});
   title.textContent='TCP 3-WAY HANDSHAKE';
   g.appendChild(title);
-  const cl=svgEl('text',{x:lx,y:Y+32,'text-anchor':'middle',
+  const cl=svgEl('text',{x:INSET_LX,y:INSET_Y+32,'text-anchor':'middle',
     'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
   cl.textContent='🌐 Client';
-  const cs=svgEl('text',{x:rx,y:Y+32,'text-anchor':'middle',
+  const cs=svgEl('text',{x:INSET_RX,y:INSET_Y+32,'text-anchor':'middle',
     'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
   cs.textContent='🖥 Server';
   g.appendChild(cl);g.appendChild(cs);
-  g.appendChild(svgEl('line',{x1:lx,y1:Y+40,x2:lx,y2:Y+H-8,
+  g.appendChild(svgEl('line',{x1:INSET_LX,y1:INSET_Y+40,x2:INSET_LX,y2:INSET_Y+INSET_H-8,
     stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
-  g.appendChild(svgEl('line',{x1:rx,y1:Y+40,x2:rx,y2:Y+H-8,
+  g.appendChild(svgEl('line',{x1:INSET_RX,y1:INSET_Y+40,x2:INSET_RX,y2:INSET_Y+INSET_H-8,
     stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
   const arrows=[
-    {id:'tcp-syn',    y:Y+58, dir:'r', label:'SYN  seq=x',         color:'#4DA3FF'},
-    {id:'tcp-synack', y:Y+78, dir:'l', label:'SYN-ACK  seq=y, ack=x+1', color:'#A78BFA'},
-    {id:'tcp-ack',    y:Y+98, dir:'r', label:'ACK  ack=y+1',        color:'#45D483'},
+    {id:'tcp-syn',    y:INSET_Y+58, dir:'r', label:'SYN  seq=x',         color:'#4DA3FF'},
+    {id:'tcp-synack', y:INSET_Y+78, dir:'l', label:'SYN-ACK  seq=y, ack=x+1', color:'#A78BFA'},
+    {id:'tcp-ack',    y:INSET_Y+98, dir:'r', label:'ACK  ack=y+1',        color:'#45D483'},
   ];
   arrows.forEach(a=>{
-    const x1=a.dir==='r'?lx:rx, x2=a.dir==='r'?rx:lx;
+    const x1=a.dir==='r'?INSET_LX:INSET_RX, x2=a.dir==='r'?INSET_RX:INSET_LX;
     const ag=svgEl('g',{id:'tcpArrow-'+a.id,opacity:'0.18'});
     ag.appendChild(svgEl('line',{x1,y1:a.y,x2,y2:a.y,stroke:a.color,'stroke-width':'1.5'}));
     const tip=a.dir==='r'?
       `${x2-7},${a.y-4} ${x2},${a.y} ${x2-7},${a.y+4}`:
       `${x2+7},${a.y-4} ${x2},${a.y} ${x2+7},${a.y+4}`;
     ag.appendChild(svgEl('polygon',{points:tip,fill:a.color}));
-    const tx=svgEl('text',{x:(lx+rx)/2,y:a.y-4,'text-anchor':'middle',
+    const tx=svgEl('text',{x:(INSET_LX+INSET_RX)/2,y:a.y-4,'text-anchor':'middle',
       'font-size':'9.5','font-weight':'600',fill:a.color,'font-family':'JetBrains Mono,monospace'});
     tx.textContent=a.label;
     ag.appendChild(tx);
@@ -1756,31 +2271,107 @@ function ensureTcpInset(){
   svg.appendChild(g);
 }
 
-function updateTcpInset(){
-  ensureTcpInset();
-  const ids=['tcp-syn','tcp-synack','tcp-ack'];
-  const reached=new Set();
-  let current=null;
-  for(let i=0;i<=state.idx && i<state.steps.length;i++){
-    const s=state.steps[i];
-    if(s && ids.includes(s.id)){
-      reached.add(s.id);
-      if(i===state.idx) current=s.id;
-    }
-  }
-  ids.forEach(id=>{
-    const ag=document.getElementById('tcpArrow-'+id);
-    if(!ag) return;
-    const line=ag.querySelector('line');
-    if(reached.has(id)){
-      ag.setAttribute('opacity', id===current ? '1':'0.75');
-      if(line) line.setAttribute('stroke-width', id===current ? '2.6':'1.7');
-    } else {
-      ag.setAttribute('opacity','0.18');
-      if(line) line.setAttribute('stroke-width','1.5');
-    }
+function ensureUdpInset(){
+  const svg=document.getElementById('topSvg');
+  if(!svg || document.getElementById('udpInset')) return;
+  const g=svgEl('g',{id:'udpInset'});
+  g.appendChild(svgEl('rect',{x:INSET_X,y:INSET_Y,width:INSET_W,height:INSET_H,rx:10,
+    fill:'rgba(28,22,10,0.55)',stroke:'#3B2F12','stroke-width':'1','stroke-dasharray':'3 2'}));
+  const title=svgEl('text',{x:INSET_X+INSET_W/2,y:INSET_Y+15,'text-anchor':'middle',
+    'font-size':'9','font-weight':'700','letter-spacing':'1.5',
+    fill:'#FAB005','font-family':'JetBrains Mono,monospace'});
+  title.textContent='UDP — NO HANDSHAKE, FIRE-AND-FORGET';
+  g.appendChild(title);
+  const cl=svgEl('text',{x:INSET_LX,y:INSET_Y+32,'text-anchor':'middle',
+    'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
+  cl.textContent='🌐 Client';
+  const cs=svgEl('text',{x:INSET_RX,y:INSET_Y+32,'text-anchor':'middle',
+    'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
+  cs.textContent='🖥 Server';
+  g.appendChild(cl);g.appendChild(cs);
+  // No lifelines (UDP is stateless) — instead show two big datagram envelopes
+  const items=[
+    {id:'udp-send', y:INSET_Y+62, dir:'r', label:'📨 DATAGRAM (request)',   color:'#FAB005'},
+    {id:'udp-echo', y:INSET_Y+92, dir:'l', label:'🪞 DATAGRAM (echo / reply)', color:'#FACC15'},
+  ];
+  items.forEach(a=>{
+    const x1=a.dir==='r'?INSET_LX:INSET_RX, x2=a.dir==='r'?INSET_RX:INSET_LX;
+    const ag=svgEl('g',{id:'udpArrow-'+a.id,opacity:'0.22'});
+    // Envelope-style block in the middle of the arrow
+    const midX=(INSET_LX+INSET_RX)/2;
+    ag.appendChild(svgEl('line',{x1,y1:a.y,x2,y2:a.y,
+      stroke:a.color,'stroke-width':'2','stroke-dasharray':'5 3'}));
+    const tip=a.dir==='r'?
+      `${x2-8},${a.y-5} ${x2},${a.y} ${x2-8},${a.y+5}`:
+      `${x2+8},${a.y-5} ${x2},${a.y} ${x2+8},${a.y+5}`;
+    ag.appendChild(svgEl('polygon',{points:tip,fill:a.color}));
+    const tx=svgEl('text',{x:midX,y:a.y-5,'text-anchor':'middle',
+      'font-size':'9.5','font-weight':'600',fill:a.color,'font-family':'JetBrains Mono,monospace'});
+    tx.textContent=a.label;
+    ag.appendChild(tx);
+    g.appendChild(ag);
   });
+  // Hint text
+  const hint=svgEl('text',{x:INSET_X+INSET_W/2,y:INSET_Y+INSET_H-6,'text-anchor':'middle',
+    'font-size':'8','fill':'#94A3B8','font-family':'Inter,sans-serif','font-style':'italic'});
+  hint.textContent='不需 SYN/SYN-ACK/ACK，每個封包獨立、輕量、無連線狀態';
+  g.appendChild(hint);
+  svg.appendChild(g);
 }
+
+function updateTransportInset(){
+  ensureTcpInset();
+  ensureUdpInset();
+  const transport = (TRANSPORT_MAP && TRANSPORT_MAP[state.protocol]) || 'tcp';
+  const tcp=document.getElementById('tcpInset');
+  const udp=document.getElementById('udpInset');
+  if(tcp) tcp.setAttribute('display', transport==='udp' ? 'none' : 'inline');
+  if(udp) udp.setAttribute('display', transport==='udp' ? 'inline' : 'none');
+
+  if(transport==='udp'){
+    const ids=['udp-send','udp-echo'];
+    const reached=new Set();
+    let current=null;
+    for(let i=0;i<=state.idx && i<state.steps.length;i++){
+      const s=state.steps[i];
+      if(s && ids.includes(s.id)){
+        reached.add(s.id);
+        if(i===state.idx) current=s.id;
+      }
+    }
+    ids.forEach(id=>{
+      const ag=document.getElementById('udpArrow-'+id);
+      if(!ag) return;
+      ag.setAttribute('opacity', reached.has(id) ? (id===current?'1':'0.8') : '0.22');
+    });
+  } else {
+    const ids=['tcp-syn','tcp-synack','tcp-ack'];
+    const reached=new Set();
+    let current=null;
+    for(let i=0;i<=state.idx && i<state.steps.length;i++){
+      const s=state.steps[i];
+      if(s && ids.includes(s.id)){
+        reached.add(s.id);
+        if(i===state.idx) current=s.id;
+      }
+    }
+    ids.forEach(id=>{
+      const ag=document.getElementById('tcpArrow-'+id);
+      if(!ag) return;
+      const line=ag.querySelector('line');
+      if(reached.has(id)){
+        ag.setAttribute('opacity', id===current ? '1':'0.75');
+        if(line) line.setAttribute('stroke-width', id===current ? '2.6':'1.7');
+      } else {
+        ag.setAttribute('opacity','0.18');
+        if(line) line.setAttribute('stroke-width','1.5');
+      }
+    });
+  }
+}
+
+// Backwards-compat shim — old call sites still work
+function updateTcpInset(){ updateTransportInset(); }
 
 function applyPrevStepsSuccess(upTo) {
   for(let i=0;i<upTo;i++){
@@ -1803,8 +2394,8 @@ function getEdgeCurvePoints(fromId, toId) {
   if(isCurved){
     const b=getNode('browser'), w=getNode('webserver');
     return fromId==='browser'
-      ? {type:'cubic', x0:b.cx, y0:b.cy+25, cx1:b.cx, cy1:330, cx2:w.cx, cy2:330, x1:w.cx, y1:w.cy+25}
-      : {type:'cubic', x0:w.cx, y0:w.cy+25, cx1:w.cx, cy1:330, cx2:b.cx, cy2:330, x1:b.cx, y1:b.cy+25};
+      ? {type:'cubic', x0:b.cx, y0:b.cy-25, cx1:b.cx, cy1:40, cx2:w.cx, cy2:40, x1:w.cx, y1:w.cy-25}
+      : {type:'cubic', x0:w.cx, y0:w.cy-25, cx1:w.cx, cy1:40, cx2:b.cx, cy2:40, x1:b.cx, y1:b.cy-25};
   }
   return {type:'linear', x0:f.cx, y0:f.cy, x1:t.cx, y1:t.cy};
 }
@@ -2159,6 +2750,11 @@ function showDoneOverlay(){
     imap:'IMAP 郵件同步完成，涵蓋 DNS、TCP、IMAPS 認證與信箱操作。',
     pop3:'POP3 郵件下載完成，涵蓋 DNS、TCP、POP3S 認證與郵件下載。',
     snmp:'SNMP 監控查詢完成，涵蓋 DNS、UDP GetRequest、MIB 解析。',
+    ssh:'SSH 加密連線建立完成，涵蓋 DNS、TCP 三向交握、金鑰交換、認證與互動 Shell。',
+    telnet:'Telnet 明文遠端登入完成，涵蓋 DNS、TCP、選項協商與 Login。',
+    ldap:'LDAP 目錄查詢完成，涵蓋 DNS、TCP、Bind、Search 與結果回傳。',
+    echo:'Echo 測試完成，使用 UDP 無連線傳送並驗證回應一致。',
+    pptp:'PPTP VPN 隧道建立完成，涵蓋 TCP 控制通道與 GRE 隧道封裝。',
   };
   document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
@@ -2195,13 +2791,18 @@ function initSim() {
   if(manualProto !== 'auto') {
     protocol = manualProto;
   } else {
-    if(/^ftp:\/\//i.test(raw))         protocol = 'ftp';
-    else if(/^smtp:\/\//i.test(raw))   protocol = 'smtp';
-    else if(/^imap:\/\//i.test(raw))   protocol = 'imap';
-    else if(/^pop3?:\/\//i.test(raw))  protocol = 'pop3';
-    else if(/^snmp:\/\//i.test(raw))   protocol = 'snmp';
-    else if(/^http:\/\//i.test(raw))   protocol = 'http';
-    else                               protocol = 'https';
+    if(/^ftp:\/\//i.test(raw))           protocol = 'ftp';
+    else if(/^smtp:\/\//i.test(raw))     protocol = 'smtp';
+    else if(/^imap:\/\//i.test(raw))     protocol = 'imap';
+    else if(/^pop3?:\/\//i.test(raw))    protocol = 'pop3';
+    else if(/^snmp:\/\//i.test(raw))     protocol = 'snmp';
+    else if(/^ssh:\/\//i.test(raw))      protocol = 'ssh';
+    else if(/^telnet:\/\//i.test(raw))   protocol = 'telnet';
+    else if(/^ldaps?:\/\//i.test(raw))   protocol = 'ldap';
+    else if(/^echo:\/\//i.test(raw))     protocol = 'echo';
+    else if(/^pptp:\/\//i.test(raw))     protocol = 'pptp';
+    else if(/^http:\/\//i.test(raw))     protocol = 'http';
+    else                                 protocol = 'https';
   }
 
   // Extract hostname robustly (handles non-standard schemes)
@@ -2329,6 +2930,8 @@ document.addEventListener('keydown',e=>{
 // ═══════════════════════════════════════════════════════
 drawTopology();
 ensureTcpInset();
+ensureUdpInset();
+updateTransportInset();
 
 // Init stage tabs (dynamic based on default protocol)
 updateStageTabs();
@@ -2358,6 +2961,9 @@ document.getElementById('protocolSel').addEventListener('change', function() {
     ftp:'ftp://ftp.example.com', smtp:'smtp://mail.example.com',
     imap:'imap://mail.example.com', pop3:'pop3://mail.example.com',
     snmp:'snmp://192.168.1.1',
+    ssh:'ssh://server.example.com', telnet:'telnet://router.example.com',
+    ldap:'ldap://ldap.example.com', echo:'echo://192.168.1.50',
+    pptp:'pptp://vpn.example.com',
   };
   document.getElementById('urlInput').placeholder = phMap[this.value] || 'https://example.com';
 });
