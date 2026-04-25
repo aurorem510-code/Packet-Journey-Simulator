@@ -400,13 +400,6 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
       </select>
     </div>
     <div class="scenario-group">
-      <label>Level</label>
-      <select class="sel" id="levelSel">
-        <option value="standard" selected>🎓 Standard</option>
-        <option value="beginner">🌱 Beginner</option>
-      </select>
-    </div>
-    <div class="scenario-group">
       <label>DNS</label>
       <select class="sel" id="dnsModeSel">
         <option value="compact" selected>🔹 Compact</option>
@@ -1787,16 +1780,18 @@ function buildSteps(scenario, host, protocol) {
 const state = {
   steps:[], idx:-1, playing:false, playTimer:null, animRAF:null,
   speed:1, scenario:'normal', host:'example.com', protocol:'https',
-  dnsMode:'compact', level:'standard', pktCount:0, started:false,
+  dnsMode:'compact', pktCount:0, started:false,
 };
 
-// ─── BEGINNER MODE — analogies + step collapsing ───────
+// ─── PLAIN-LANGUAGE ANALOGIES (always applied) ─────────
 const BEGINNER_ANALOGIES = {
   'url-parse':       '🧠 比喻：你說「我要去 example 家」，電腦先確認這是個地址，不是搜尋。',
   'dns-cache-hit':   '📒 比喻：像翻自己的通訊錄找電話，1 毫秒就找到了。',
   'dns-query':       '☎️ 比喻：電腦打給「DNS 查號台」問：「example.com 的住址是？」',
   'dns-return':      '📩 比喻：查號台回傳一個 IP（像門牌號碼），電腦記下來。',
-  'tcp-connect':     '🤝 比喻：打電話給對方並等對方接起，雙方確認「聽得到嗎？」「聽得到」。',
+  'tcp-syn':         '🤝 比喻：你打電話：「你在嗎？」（SYN 第 1 步）',
+  'tcp-synack':      '☎️ 比喻：對方接起：「我在，你呢？」（SYN-ACK 第 2 步）',
+  'tcp-ack':         '✅ 比喻：你回：「我也在，可以開始講話了。」（ACK 第 3 步，連線建立）',
   'http-req':        '🍔 比喻：你跟店員點餐：「我要首頁，謝謝。」',
   'http-resp':       '🥡 比喻：店員把餐點打包好遞給你 — 這就是網頁的 HTML。',
   'render':          '🎨 比喻：你把外帶餐打開擺盤、開動 — 瀏覽器把 HTML 畫成你看到的網頁。',
@@ -1820,39 +1815,8 @@ const BEGINNER_ANALOGIES = {
   'snmp-response':   '📊 比喻：交換器回傳數字（例如：1234567 個百分秒）。',
 };
 
-function collapseTcp(S){
-  const synIdx = S.findIndex(s=>s.id==='tcp-syn');
-  if(synIdx<0) return S;
-  const ackIdx = S.findIndex(s=>s.id==='tcp-ack');
-  const port = (S[synIdx].protocol||'').match(/\d+/)?.[0] || '443';
-  const collapsed = {
-    id:'tcp-connect', stageIdx:S[synIdx].stageIdx,
-    title:'建立 TCP 連線', titleEN:'TCP Connect',
-    protocol:`TCP (port ${port})`, layer:'Transport', packetType:'3-way Handshake',
-    badgeClass:'b-tcp', badgeText:'TCP',
-    from:'browser', to:'webserver', pkt:'SYN→ACK', pktColor:'#4DA3FF',
-    activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-    kpiProto:'TCP', kpiLat:'~ 22ms', kpiStatus:'ESTABLISHED',
-    what:`你的電腦和伺服器透過三次握手建立可靠連線。簡單說：你電腦先打招呼（SYN），伺服器回應（SYN-ACK），你再確認（ACK），雙方就接通了。`,
-    details:[
-      {k:'步驟 1',v:'你的電腦 → 伺服器：SYN「你在嗎？」'},
-      {k:'步驟 2',v:'伺服器 → 你的電腦：SYN-ACK「我在，你呢？」'},
-      {k:'步驟 3',v:'你的電腦 → 伺服器：ACK「我也在，開始吧。」',c:'c-success'},
-      {k:'狀態',v:'ESTABLISHED — 連線成功',c:'c-success'},
-    ],
-    tech:'TCP 三向交握的目的是讓雙方確認彼此都能「收得到」也「送得出」。完成後雙方記下序號，後續資料才能可靠傳輸。',
-    fail:null,
-    interview:'進階模式可看到完整三步分解，包含 ISN、Window Size、MSS 等欄位。',
-    isError:false,
-  };
-  const before = S.slice(0, synIdx);
-  const after = ackIdx>=0 ? S.slice(ackIdx+1) : S.slice(synIdx+1);
-  return [...before, collapsed, ...after];
-}
-
-function simplifyForBeginner(S){
-  const collapsed = collapseTcp(S);
-  return collapsed.map(step=>{
+function applyAnalogies(S){
+  return S.map(step=>{
     const note = BEGINNER_ANALOGIES[step.id];
     if(!note) return step;
     return { ...step, what: note + '<br><br>' + (step.what||'') };
@@ -2425,14 +2389,10 @@ function initSim() {
   state.host=host;
   state.protocol=protocol;
   state.scenario=document.getElementById('scenarioSel').value;
-  const levelEl=document.getElementById('levelSel');
-  state.level=levelEl?levelEl.value:'standard';
   const dnsModeEl=document.getElementById('dnsModeSel');
   state.dnsMode=dnsModeEl?dnsModeEl.value:'compact';
-  if(state.level==='beginner') state.dnsMode='cached';
   if(protocol==='snmp') state.dnsMode='cached';
-  state.steps=buildSteps(state.scenario,state.host,state.protocol);
-  if(state.level==='beginner') state.steps=simplifyForBeginner(state.steps);
+  state.steps=applyAnalogies(buildSteps(state.scenario,state.host,state.protocol));
   state.idx=-1; state.pktCount=0; state.started=true;
 
   updateNodeLabels(state.protocol);
@@ -2489,11 +2449,6 @@ function moveTooltip(ev){
 document.getElementById('startBtn').addEventListener('click', initSim);
 document.getElementById('urlInput').addEventListener('keydown', e=>{ if(e.key==='Enter') initSim(); });
 
-document.getElementById('levelSel').addEventListener('change', function(){
-  const dns = document.getElementById('dnsModeSel');
-  if(this.value==='beginner'){ dns.value='cached'; dns.disabled=true; }
-  else { dns.disabled=false; }
-});
 
 document.getElementById('nextBtn').addEventListener('click',()=>{
   if(!state.started) return;
