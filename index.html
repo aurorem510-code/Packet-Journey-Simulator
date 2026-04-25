@@ -1710,6 +1710,78 @@ function resetAllVisuals() {
   document.getElementById('svgPacket').innerHTML='';
 }
 
+// ─── TCP HANDSHAKE INSET (sequence diagram) ────────────
+function ensureTcpInset(){
+  const svg=document.getElementById('topSvg');
+  if(!svg || document.getElementById('tcpInset')) return;
+  const X=240,Y=222,W=320,H=110, lx=X+50, rx=X+W-50;
+  const g=svgEl('g',{id:'tcpInset'});
+  g.appendChild(svgEl('rect',{x:X,y:Y,width:W,height:H,rx:10,
+    fill:'rgba(20,28,42,0.55)',stroke:'#2A3445','stroke-width':'1','stroke-dasharray':'3 2'}));
+  const title=svgEl('text',{x:X+W/2,y:Y+15,'text-anchor':'middle',
+    'font-size':'9','font-weight':'700','letter-spacing':'1.5',
+    fill:'#94A3B8','font-family':'JetBrains Mono,monospace'});
+  title.textContent='TCP 3-WAY HANDSHAKE';
+  g.appendChild(title);
+  const cl=svgEl('text',{x:lx,y:Y+32,'text-anchor':'middle',
+    'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
+  cl.textContent='🌐 Client';
+  const cs=svgEl('text',{x:rx,y:Y+32,'text-anchor':'middle',
+    'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
+  cs.textContent='🖥 Server';
+  g.appendChild(cl);g.appendChild(cs);
+  g.appendChild(svgEl('line',{x1:lx,y1:Y+40,x2:lx,y2:Y+H-8,
+    stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
+  g.appendChild(svgEl('line',{x1:rx,y1:Y+40,x2:rx,y2:Y+H-8,
+    stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
+  const arrows=[
+    {id:'tcp-syn',    y:Y+58, dir:'r', label:'SYN  seq=x',         color:'#4DA3FF'},
+    {id:'tcp-synack', y:Y+78, dir:'l', label:'SYN-ACK  seq=y, ack=x+1', color:'#A78BFA'},
+    {id:'tcp-ack',    y:Y+98, dir:'r', label:'ACK  ack=y+1',        color:'#45D483'},
+  ];
+  arrows.forEach(a=>{
+    const x1=a.dir==='r'?lx:rx, x2=a.dir==='r'?rx:lx;
+    const ag=svgEl('g',{id:'tcpArrow-'+a.id,opacity:'0.18'});
+    ag.appendChild(svgEl('line',{x1,y1:a.y,x2,y2:a.y,stroke:a.color,'stroke-width':'1.5'}));
+    const tip=a.dir==='r'?
+      `${x2-7},${a.y-4} ${x2},${a.y} ${x2-7},${a.y+4}`:
+      `${x2+7},${a.y-4} ${x2},${a.y} ${x2+7},${a.y+4}`;
+    ag.appendChild(svgEl('polygon',{points:tip,fill:a.color}));
+    const tx=svgEl('text',{x:(lx+rx)/2,y:a.y-4,'text-anchor':'middle',
+      'font-size':'9.5','font-weight':'600',fill:a.color,'font-family':'JetBrains Mono,monospace'});
+    tx.textContent=a.label;
+    ag.appendChild(tx);
+    g.appendChild(ag);
+  });
+  svg.appendChild(g);
+}
+
+function updateTcpInset(){
+  ensureTcpInset();
+  const ids=['tcp-syn','tcp-synack','tcp-ack'];
+  const reached=new Set();
+  let current=null;
+  for(let i=0;i<=state.idx && i<state.steps.length;i++){
+    const s=state.steps[i];
+    if(s && ids.includes(s.id)){
+      reached.add(s.id);
+      if(i===state.idx) current=s.id;
+    }
+  }
+  ids.forEach(id=>{
+    const ag=document.getElementById('tcpArrow-'+id);
+    if(!ag) return;
+    const line=ag.querySelector('line');
+    if(reached.has(id)){
+      ag.setAttribute('opacity', id===current ? '1':'0.75');
+      if(line) line.setAttribute('stroke-width', id===current ? '2.6':'1.7');
+    } else {
+      ag.setAttribute('opacity','0.18');
+      if(line) line.setAttribute('stroke-width','1.5');
+    }
+  });
+}
+
 function applyPrevStepsSuccess(upTo) {
   for(let i=0;i<upTo;i++){
     const s=state.steps[i];
@@ -2011,6 +2083,7 @@ function applyStep(idx, onDone) {
   updateLeftSidebar();
   updateRightPanel();
   updateButtons();
+  updateTcpInset();
 
   if(step.from && step.to){
     animatePacket(step.from, step.to, step.pkt, step.pktColor, step.isError, ()=>{
@@ -2049,6 +2122,7 @@ function jumpTo(idx) {
   updateLeftSidebar();
   updateRightPanel();
   updateButtons();
+  updateTcpInset();
   document.getElementById('svgPacket').innerHTML='';
 }
 
@@ -2159,6 +2233,7 @@ function initSim() {
   state.idx=-1; state.pktCount=0; state.started=true;
 
   updateNodeLabels(state.protocol);
+  updateTcpInset();
   resetAllVisuals();
   updateStageTabs();
   updateLeftSidebar();
@@ -2183,6 +2258,7 @@ function resetSim() {
   updateLeftSidebar();
   updateRightPanel();
   updateButtons();
+  updateTcpInset();
   document.getElementById('nextBtn').disabled=true;
   document.getElementById('playBtn').disabled=true;
   document.getElementById('prevBtn').disabled=true;
@@ -2252,6 +2328,7 @@ document.addEventListener('keydown',e=>{
 //  BOOTSTRAP
 // ═══════════════════════════════════════════════════════
 drawTopology();
+ensureTcpInset();
 
 // Init stage tabs (dynamic based on default protocol)
 updateStageTabs();
