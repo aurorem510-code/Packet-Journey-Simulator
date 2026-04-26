@@ -335,6 +335,8 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .b-pptp{background:rgba(167,139,250,.12);color:#A78BFA;border:1px solid rgba(167,139,250,.28)}
 .b-udp{background:rgba(250,176,5,.12);color:#FAB005;border:1px solid rgba(250,176,5,.28)}
 .b-tls{background:rgba(132,204,22,.12);color:#84CC16;border:1px solid rgba(132,204,22,.28)}
+.b-dhcp{background:rgba(34,211,238,.12);color:#22D3EE;border:1px solid rgba(34,211,238,.28)}
+.b-nat{background:rgba(251,146,60,.12);color:#FB923C;border:1px solid rgba(251,146,60,.28)}
 
 .rp-body{padding:16px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1}
 
@@ -445,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v17.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v18.0</div>
     </div>
   </a>
 
@@ -474,6 +476,8 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
         <option value="ldap">🗂 LDAP</option>
         <option value="echo">🔁 Echo</option>
         <option value="pptp">🛡 PPTP</option>
+        <option value="dhcp">📮 DHCP</option>
+        <option value="nat">🏠 NAT</option>
       </select>
     </div>
     <div class="scenario-group">
@@ -664,6 +668,8 @@ const PROTOCOL_LABELS = {
   ldap:     { browser:['LDAP Client','App','🗂'],       webserver:['LDAP Server','slapd','🏛'],        render:['Directory Entries','DIT','📑'] },
   echo:     { browser:['Echo Client','Tester','🔁'],    webserver:['Echo Server','port 7','🪞'],       render:['Verify Output','Match','✅'] },
   pptp:     { browser:['VPN Client','Initiator','🛡'],  webserver:['VPN Concentrator','PNS','🏰'],     render:['Tunneled Network','GRE','🌐'] },
+  dhcp:     { browser:['Client (no IP)','Booting','💻'],webserver:['DHCP Server','LAN Gateway','📮'],  render:['Network Ready','IF UP','📶'] },
+  nat:      { browser:['LAN Client','192.168.1.42','🏠'],webserver:['Public Server','203.0.113.5','🌍'],render:['Response Received','LAN','📥'] },
 };
 
 const DNS_ZONE_LABELS = {
@@ -756,14 +762,16 @@ function getStages(p) {
   if(p==='ldap')   return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','LDAP Bind','Search','Result'];
   if(p==='echo')   return ['Target Parse','DNS Lookup','IP Resolved','UDP Send','UDP Echo','Verify','Complete'];
   if(p==='pptp')   return ['URL Parse','DNS Lookup','IP Resolved','TCP Control','PPTP Setup','GRE Tunnel','Connected'];
+  if(p==='dhcp')   return ['Boot','DISCOVER','OFFER','REQUEST','ACK','Network Up'];
+  if(p==='nat')    return ['LAN Origin','DNS','SYN @ NAT','Translate Out','Public Leg','Translate In','Established'];
   return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
 }
 
 // ─── TRANSPORT MAP (TCP vs UDP visualization) ──────────
 const TRANSPORT_MAP = {
   https:'tcp', http:'tcp', ftp:'tcp', smtp:'tcp', imap:'tcp', pop3:'tcp',
-  ssh:'tcp', telnet:'tcp', ldap:'tcp', pptp:'tcp',
-  snmp:'udp', echo:'udp',
+  ssh:'tcp', telnet:'tcp', ldap:'tcp', pptp:'tcp', nat:'tcp',
+  snmp:'udp', echo:'udp', dhcp:'udp',
 };
 const STAGES = getStages('https');
 
@@ -2075,6 +2083,270 @@ function buildPptpSteps(scenario, host){
   return S;
 }
 
+// ─── DHCP STEPS BUILDER (DORA) ─────────────────────────
+function buildDhcpSteps(scenario, host){
+  const S = [
+    {
+      id:'dhcp-boot', stageIdx:0,
+      title:'裝置開機 — 尚無 IP', titleEN:'Boot — No IP yet',
+      protocol:'DHCP Client (RFC 2131)', layer:'Application', packetType:'Init',
+      badgeClass:'b-dhcp', badgeText:'DHCP',
+      from:null, to:'browser', pkt:'BOOT', pktColor:'#22D3EE',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'DHCP', kpiLat:'< 1ms', kpiStatus:'NO IP',
+      what:'裝置剛開機接上網路線/Wi-Fi。網卡有 MAC 但還沒有 IP，無法跟外界通訊（連預設閘道 192.168.1.1 都還不知道）。',
+      details:[
+        {k:'MAC',v:'02:42:ac:11:00:02'},
+        {k:'Current IP',v:'0.0.0.0',c:'c-warning'},
+        {k:'State',v:'INIT'},
+      ],
+      tech:'DHCP 是 BOOTP（RFC 951）的延伸。沒有 DHCP 之前，每台機器都得手動填 IP/Mask/Gateway/DNS — 大企業環境根本沒法管理。',
+      fail:null,
+      interview:'DHCP 解決的核心問題：自動化網路設定 + 集中管理 + IP 池化。考點常見「為什麼要有 DHCP」、「Static vs DHCP 的取捨」、「DHCP relay 怎麼跨 VLAN 工作」。',
+    },
+    {
+      id:'dhcp-discover', stageIdx:1,
+      title:'DHCPDISCOVER — 廣播找伺服器', titleEN:'DHCPDISCOVER (Broadcast)',
+      protocol:'DHCP / UDP (port 67/68)', layer:'Application', packetType:'DISCOVER',
+      badgeClass:'b-dhcp', badgeText:'DHCP',
+      from:'browser', to:'resolver', pkt:'DISCOVER', pktColor:'#22D3EE',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DHCP', kpiLat:'~ 5ms', kpiStatus:'DISCOVER',
+      what:'客戶端不知道伺服器是誰，所以走廣播：src 0.0.0.0:68 → dst 255.255.255.255:67。整個 LAN 段都會收到，DHCP 伺服器（通常就是 LAN 路由器）負責回應。',
+      details:[
+        {k:'src IP:port',v:'0.0.0.0:68'},
+        {k:'dst IP:port',v:'255.255.255.255:67 (broadcast)'},
+        {k:'BOOTP op',v:'1 (BOOTREQUEST)'},
+        {k:'Xid',v:'0x3A4F (transaction id)'},
+        {k:'Options',v:'53=DISCOVER, 55=Parameter List (1,3,6,15)'},
+      ],
+      tech:'廣播只在 L2 段內傳遞。跨 VLAN/子網路時需要在路由器上設定 DHCP relay (`ip helper-address`)，由 relay 把 broadcast 轉為 unicast 送到 DHCP 伺服器。',
+      fail:null,
+      interview:'option 53 是 DHCP message type；option 55 (Parameter Request List) 告訴伺服器「這些選項給我也回一下」。常用選項：1=Subnet Mask、3=Router、6=DNS、15=Domain、51=Lease Time。',
+    },
+    {
+      id:'dhcp-offer', stageIdx:2,
+      title:'DHCPOFFER — 伺服器提案', titleEN:'DHCPOFFER (Server proposes)',
+      protocol:'DHCP / UDP', layer:'Application', packetType:'OFFER',
+      badgeClass:'b-dhcp', badgeText:'DHCP',
+      from:'resolver', to:'browser', pkt:'OFFER', pktColor:'#22D3EE',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DHCP', kpiLat:'~ 8ms', kpiStatus:'OFFER',
+      what:'DHCP 伺服器從可用 IP 池挑一個給你，把完整的網路設定打包寄回（仍以廣播或 unicast 到 MAC）。',
+      details:[
+        {k:'Offered IP',v:'192.168.1.42',c:'c-success'},
+        {k:'Subnet Mask',v:'255.255.255.0'},
+        {k:'Router (GW)',v:'192.168.1.1'},
+        {k:'DNS',v:'192.168.1.1, 8.8.8.8'},
+        {k:'Lease',v:'7200s (2h)'},
+        {k:'Server ID',v:'192.168.1.1'},
+      ],
+      tech:'若 LAN 上有多台 DHCP 伺服器（rogue / 多 VLAN），客戶端可能收到多個 OFFER。客戶端通常選最先收到的。',
+      fail:null,
+      interview:'DHCP starvation 攻擊：攻擊者偽造大量 MAC 不斷 DISCOVER，把 IP 池吃光；接著 rogue DHCP 伺服器接管。防禦：交換器啟用 DHCP Snooping + Port Security。',
+    },
+    {
+      id:'dhcp-request', stageIdx:3,
+      title:'DHCPREQUEST — 正式索取', titleEN:'DHCPREQUEST (Client commits)',
+      protocol:'DHCP / UDP', layer:'Application', packetType:'REQUEST',
+      badgeClass:'b-dhcp', badgeText:'DHCP',
+      from:'browser', to:'resolver', pkt:'REQUEST', pktColor:'#22D3EE',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DHCP', kpiLat:'~ 5ms', kpiStatus:'REQUEST',
+      what:'客戶端正式跟「選定」的伺服器要那個 IP（仍走廣播，讓未被選中的其他 DHCP 伺服器知道可以收回提案）。',
+      details:[
+        {k:'src IP:port',v:'0.0.0.0:68 (still no IP)'},
+        {k:'dst',v:'255.255.255.255:67 (broadcast)'},
+        {k:'Requested IP',v:'192.168.1.42',c:'c-info'},
+        {k:'Server ID',v:'192.168.1.1'},
+        {k:'Option 53',v:'REQUEST (3)'},
+      ],
+      tech:'廣播 REQUEST 的設計巧思：未被選中的伺服器看到「Server ID 不是我」就把這 IP 從 reserved 池放回；被選中的伺服器看到自己就完成綁定。',
+      fail:null,
+      interview:'Lease 一半時間 (T1=lease/2) 會觸發 RENEW（unicast 給原伺服器）；3/8 之後 (T2=lease×7/8) 找不到原伺服器時改 broadcast REBIND；都失敗則 expire 重來 DORA。',
+    },
+    {
+      id:'dhcp-ack', stageIdx:4,
+      title:'DHCPACK — 蓋章確認', titleEN:'DHCPACK (Server commits)',
+      protocol:'DHCP / UDP', layer:'Application', packetType:'ACK',
+      badgeClass:'b-dhcp', badgeText:'DHCP',
+      from:'resolver', to:'browser', pkt:'ACK', pktColor:'#45D483',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DHCP', kpiLat:'~ 5ms', kpiStatus:'BOUND',
+      what:'伺服器最終蓋章：IP 192.168.1.42 從現在起 7200 秒都是你的。客戶端進入 BOUND 狀態，套用所有設定。',
+      details:[
+        {k:'Result',v:'ACK (success)',c:'c-success'},
+        {k:'Your IP',v:'192.168.1.42',c:'c-success'},
+        {k:'Lease Start',v:'now'},
+        {k:'Renew Timer (T1)',v:'+3600s'},
+        {k:'Rebind Timer (T2)',v:'+6300s'},
+      ],
+      tech:'若 IP 衝突（其他人已用）伺服器可能回 NAK，客戶端必須重來 DORA。Linux 拿到 ACK 後通常會送一次 ARP（gratuitous）通知 LAN 上其他人「這個 IP 是我了」。',
+      fail:null,
+      interview:'DHCP 全程在 L7 跑 UDP，但設計考慮 L2 broadcast 域；網管要懂這個分層，才能解釋「為什麼跨 VLAN DHCP 不通」。',
+    },
+    {
+      id:'dhcp-up', stageIdx:5,
+      title:'網路就緒 — 開始上網', titleEN:'Interface UP — Network Ready',
+      protocol:'OS Network Stack', layer:'Application', packetType:'IF UP',
+      badgeClass:'b-dhcp', badgeText:'DHCP',
+      from:'browser', to:'render', pkt:'UP', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'OK', kpiLat:'~ 2ms', kpiStatus:'NETWORK UP',
+      what:'OS 把 IP/Mask/GW/DNS 寫入網卡與 routing table、resolv.conf，從這一刻才能跑後續任何網路操作（ping、DNS、HTTP…）。',
+      details:[
+        {k:'eth0',v:'192.168.1.42/24',c:'c-success'},
+        {k:'default route',v:'via 192.168.1.1'},
+        {k:'/etc/resolv.conf',v:'nameserver 192.168.1.1, 8.8.8.8'},
+        {k:'Status',v:'UP, RUNNING',c:'c-success'},
+      ],
+      tech:'所以「為什麼剛開機後幾秒網路才通」 — 那幾秒就是在跑 DORA + ARP + (可能還有) 802.1X 認證。',
+      fail:null,
+      interview:'除錯順序：1) ip a 看有沒有 IP 2) ip r 看 default route 3) cat /etc/resolv.conf 看 DNS 4) ping gateway → ping 8.8.8.8 → ping example.com 5) tcpdump -i any port 67 抓 DHCP 流量。',
+      isLast:true,
+    },
+  ];
+  return S;
+}
+
+// ─── NAT STEPS BUILDER ─────────────────────────────────
+function buildNatSteps(scenario, host){
+  const S = [
+    {
+      id:'nat-origin', stageIdx:0,
+      title:'LAN 客戶端發起連線', titleEN:'LAN Client Initiates',
+      protocol:'Application', layer:'Application', packetType:'Origin',
+      badgeClass:'b-nat', badgeText:'NAT',
+      from:null, to:'browser', pkt:'INIT', pktColor:'#FB923C',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'NAT', kpiLat:'< 1ms', kpiStatus:'LAN',
+      what:`家用/辦公室客戶端坐在私有網段（192.168.1.42），想連到外網的 ${host}。私有 IP 屬於 RFC 1918（10/8、172.16/12、192.168/16），不能在公網路由。`,
+      details:[
+        {k:'Client',v:'192.168.1.42 (RFC 1918)'},
+        {k:'Target',v:host+' (public)'},
+        {k:'Default GW',v:'192.168.1.1 (NAT router)'},
+      ],
+      tech:'NAT (RFC 3022) / NAPT (NAT with port translation) 是 IPv4 短缺時代的延命之術。一個公網 IP 透過 port 區分，可同時服務上千條 LAN 連線。',
+      fail:null,
+      interview:'NAT 是「盲點」最多的網路概念：它打破了「IP 端到端」的假設，讓 P2P / SIP / FTP active mode / 入站連線都需要額外機制（STUN/TURN/UPnP/port forwarding）。',
+    },
+    {
+      id:'nat-dns', stageIdx:1,
+      title:'DNS 查詢（也走 NAT）', titleEN:'DNS Lookup (also NATted)',
+      protocol:'DNS / UDP 53', layer:'Application', packetType:'A Query',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'browser', to:'resolver', pkt:'A?', pktColor:'#3DD9C5',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'DNS', kpiLat:'~ 12ms', kpiStatus:'A 203.0.113.50',
+      what:'第一個外送封包是 DNS：客戶端問本機 DNS（192.168.1.1，通常就是 NAT 路由器或上游 8.8.8.8）。這次查詢同樣會經過 NAT 翻譯。',
+      details:[
+        {k:'Query',v:host+' A'},
+        {k:'Resolver',v:'192.168.1.1 / 8.8.8.8'},
+        {k:'Result',v:'203.0.113.50',c:'c-success'},
+      ],
+      tech:'家用 router 多半同時當 DHCP + DNS 中繼 + NAT，三個角色全在同一台。',
+      fail:null,
+      interview:'DNS 透過 NAT：UDP NAT 條目通常只活 30 秒到幾分鐘，遠短於 TCP。長 idle 後 DNS 重新查詢會建立新條目。',
+    },
+    {
+      id:'nat-syn', stageIdx:2,
+      title:'TCP SYN 從 LAN 出發', titleEN:'TCP SYN Leaves LAN',
+      protocol:'TCP (port 443)', layer:'Transport', packetType:'SYN',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'browser', to:'webserver', pkt:'SYN', pktColor:'#4DA3FF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'SYN (private)',
+      what:'客戶端產生 TCP SYN，準備連到 203.0.113.50:443。封包此時的 src 仍是 192.168.1.42:51234（任意 ephemeral port），dst 是公網 IP/443。',
+      details:[
+        {k:'src',v:'192.168.1.42:51234',c:'c-info'},
+        {k:'dst',v:'203.0.113.50:443'},
+        {k:'Flags',v:'SYN'},
+        {k:'note',v:'此封包若直接送到公網，回程會找不到路（私網無公網路由）',c:'c-warning'},
+      ],
+      tech:'「ephemeral port」: 客戶端隨機選 32768–60999 (Linux 預設) 之間的 port 作為自己的 src port。NAT 之後可能被改寫。',
+      fail:null,
+      interview:'四元組 (src ip, src port, dst ip, dst port) 是辨識 TCP 連線的鑰匙。NAT 改寫 src ip+port 等同「在路由器上換了一條全新四元組的連線」。',
+    },
+    {
+      id:'nat-translate-out', stageIdx:3,
+      title:'NAT 出口翻譯（建表）', titleEN:'NAT Outbound Translation',
+      protocol:'NAT / NAPT', layer:'Network', packetType:'SNAT',
+      badgeClass:'b-nat', badgeText:'NAT',
+      from:'browser', to:'webserver', pkt:'SNAT', pktColor:'#FB923C',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NAT', kpiLat:'~ 0.5ms', kpiStatus:'TRANSLATED',
+      what:'封包到達 NAT 路由器。路由器把 src 改寫成自己的公網 IP + 一個新的 src port，並在 NAT 表加一筆對應記錄，以便回程查表還原。',
+      details:[
+        {k:'Original src',v:'192.168.1.42:51234'},
+        {k:'New src',    v:'203.0.113.5:60001',c:'c-success'},
+        {k:'dst (unchanged)',v:'203.0.113.50:443'},
+        {k:'NAT Table Entry',v:'192.168.1.42:51234 ⇄ 203.0.113.5:60001'},
+        {k:'Timeout',v:'TCP: 86400s (idle), UDP: ~30-300s'},
+      ],
+      tech:'NAPT (Network Address Port Translation) 是最常見的形式。路由器同時改 src IP 與 src port，讓多台 LAN 機器共用同一個公網 IP 不會撞。',
+      fail:null,
+      interview:'NAT 種類（RFC 4787 分類）：Full Cone / Restricted / Port-Restricted / Symmetric。Symmetric NAT 對 P2P 最不友善，因為每個目的端都被分配不同的 NAT port。STUN 用來偵測 NAT 類型，TURN 在 Symmetric 下做 relay。',
+    },
+    {
+      id:'nat-public-leg', stageIdx:4,
+      title:'公網段 — 抵達伺服器', titleEN:'Public Leg — Server Sees NAT IP',
+      protocol:'TCP (port 443)', layer:'Transport', packetType:'SYN',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'browser', to:'webserver', pkt:'SYN', pktColor:'#4DA3FF',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 30ms', kpiStatus:'AT SERVER',
+      what:'伺服器收到 SYN，從伺服器角度看「來源是 203.0.113.5:60001」 — 它不知道（也不需要知道）背後其實是某個家庭 LAN 上的 192.168.1.42。',
+      details:[
+        {k:'Server sees src',v:'203.0.113.5:60001',c:'c-info'},
+        {k:'Server sees dst',v:'203.0.113.50:443'},
+        {k:'Hides',v:'真實 LAN 拓撲、客戶端內部 IP'},
+      ],
+      tech:'這個「隱藏」是 NAT 的副作用安全價值：外部攻擊者無法直接連到 LAN 機器（沒有 NAT 表條目就丟包）。但這不是真正的防火牆，stateful firewall 才是。',
+      fail:null,
+      interview:'CGNAT (Carrier-Grade NAT) 是 ISP 對使用者也再做一層 NAT — 你拿到的「公網 IP」其實還是 100.64.0.0/10 的私網。導致 P2P 與某些遊戲問題。',
+    },
+    {
+      id:'nat-translate-in', stageIdx:5,
+      title:'回程：NAT 入口反向翻譯', titleEN:'Inbound NAT (Reverse Lookup)',
+      protocol:'NAT / NAPT', layer:'Network', packetType:'DNAT',
+      badgeClass:'b-nat', badgeText:'NAT',
+      from:'webserver', to:'browser', pkt:'DNAT', pktColor:'#FB923C',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NAT', kpiLat:'~ 0.5ms', kpiStatus:'REVERSED',
+      what:'伺服器回 SYN-ACK 到 203.0.113.5:60001。NAT 路由器收到後查表：「啊，60001 對應到內部 192.168.1.42:51234」，把 dst 改寫後丟回 LAN。',
+      details:[
+        {k:'Server dst (sent)',v:'203.0.113.5:60001'},
+        {k:'NAT lookup',v:'60001 → 192.168.1.42:51234',c:'c-info'},
+        {k:'Forward to',v:'192.168.1.42:51234',c:'c-success'},
+        {k:'Table Entry',v:'still active'},
+      ],
+      tech:'若沒有對應條目（例如 NAT 重啟後第一個外來封包），NAT 直接丟棄 — 這就是為什麼 NAT 路由器斷電一秒會讓你所有連線斷掉。',
+      fail:null,
+      interview:'NAT keepalive：手機 App 經常要送很短的 heartbeat（例如 LINE 每 30 秒），目的就是維持 NAT 條目不被 timeout 清掉，否則 push notification 就斷了。',
+    },
+    {
+      id:'nat-recv', stageIdx:6,
+      title:'LAN 客戶端收到回應', titleEN:'LAN Client Receives Reply',
+      protocol:'TCP', layer:'Transport', packetType:'SYN-ACK',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'webserver', to:'render', pkt:'OK', pktColor:'#45D483',
+      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
+      what:'客戶端從它原本的角度看，封包就是「203.0.113.50:443 → 192.168.1.42:51234」 — 完全感受不到中間 NAT 的存在。後續 TCP/TLS/HTTP 流程一切正常。',
+      details:[
+        {k:'Client sees src',v:'203.0.113.50:443'},
+        {k:'Client sees dst',v:'192.168.1.42:51234',c:'c-success'},
+        {k:'Connection',v:'ESTABLISHED',c:'c-success'},
+      ],
+      tech:'NAT 對應用層基本透明。但破壞 IP 端到端，這是它設計上的根本爭議；IPv6 的初衷之一就是「廢掉 NAT，回到純 routing」 — 雖然實務上 IPv6 也常見 NPTv6。',
+      fail:null,
+      interview:'好題：「為什麼 IPv6 不需要 NAT？」答：位址空間 2^128 足以給每個原子分配 IP；端到端原則回歸；防火牆功能該由 stateful firewall 處理而非 NAT。',
+      isLast:true,
+    },
+  ];
+  return S;
+}
+
 // ─── STEP DEFINITIONS ──────────────────────────────────
 function injectTcpClose(S, protocol, scenario){
   if((TRANSPORT_MAP[protocol]||'tcp')!=='tcp') return S;
@@ -2104,6 +2376,8 @@ function buildSteps(scenario, host, protocol) {
   else if(protocol==='ldap')   S = buildLdapSteps(scenario, host);
   else if(protocol==='echo')   S = buildEchoSteps(scenario, host);
   else if(protocol==='pptp')   S = buildPptpSteps(scenario, host);
+  else if(protocol==='dhcp')   S = buildDhcpSteps(scenario, host);
+  else if(protocol==='nat')    S = buildNatSteps(scenario, host);
   if(S) return injectTcpClose(S, protocol, scenario);
 
   const isHttps = protocol==='https';
@@ -2376,6 +2650,19 @@ const BEGINNER_ANALOGIES = {
   'pptp-control':    '🛡 比喻：先建一條「控制電話線」（TCP 1723）告訴對方要開隧道。',
   'pptp-setup':      '🔧 比喻：雙方協商加密與隧道參數，準備把 IP 封包包進信封。',
   'pptp-gre':        '🚇 比喻：GRE 像一條地下隧道，把整個 IP 封包再裝進另一個封包寄出去。',
+  'dhcp-boot':       '💻 比喻：你剛開機，連名字都沒有，只能對全網大喊「有人能借我一張身分證嗎？」',
+  'dhcp-discover':   '📣 比喻：DISCOVER 是廣播 — 全網都聽得到的「有 DHCP 嗎？」',
+  'dhcp-offer':      '🎁 比喻：DHCP 伺服器舉手回「我這邊有空位，IP 給你 192.168.1.42，租期 2 小時」。',
+  'dhcp-request':    '🙋 比喻：你正式回「我選你那張，麻煩確認」（也是廣播，讓其他伺服器知道你選誰）。',
+  'dhcp-ack':        '✅ 比喻：伺服器最終蓋章 ACK，IP 從這刻起是你的，預設閘道、DNS、租期都記下。',
+  'dhcp-up':         '📶 比喻：網路就緒 — 從現在起你才能 ping、查 DNS、上網。',
+  'nat-origin':      '🏠 比喻：你坐在家裡 192.168.1.42，從家裡寄一封信出去。',
+  'nat-dns':         '☎️ 比喻：DNS 查號台一樣要走 NAT — 內部小信封換上公司公用信封寄出。',
+  'nat-syn':         '📨 比喻：你的封包帶著家裡內部地址，準備離開家門（NAT 路由器）。',
+  'nat-translate-out':'🛂 比喻：路由器在表格上記下「這人是 192.168.1.42:51234」，把信封改寫成「公用 IP 203.0.113.5:60001」寄出。',
+  'nat-public-leg':  '🌍 比喻：對外世界只看得到公司外牆地址，根本不知道你住幾號。',
+  'nat-translate-in':'🔄 比喻：對方寄回信到公用地址，路由器查表「啊這封是給 192.168.1.42 的」，寫上你家門牌轉投。',
+  'nat-recv':        '📬 比喻：你在家裡收到回信，整個過程外部完全看不到你的真實內部地址。',
 };
 
 // ─── NETWORK PROFILE (RTT scaling by host) ─────────────
@@ -2667,6 +2954,8 @@ const PROTOCOL_PORTS = {
   pptp:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'CTRL',  proto:'TCP', port:1723,layer:'tx'}, {label:'GRE',  proto:'GRE', port:'IP-47', layer:'net'}],
   snmp:  [{label:'SNMP', proto:'UDP', port:161, layer:'tx'}],
   echo:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'ECHO',  proto:'UDP', port:7,   layer:'tx'}],
+  dhcp:  [{label:'DHCP-S',proto:'UDP',port:67,  layer:'tx'}, {label:'DHCP-C',proto:'UDP', port:68,  layer:'tx'}],
+  nat:   [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'TCP',   proto:'TCP', port:443, layer:'tx'}, {label:'NAT-Tbl',proto:'TCP',port:'L4',layer:'tx'}],
 };
 
 const STEP_PORT_HINTS = [
@@ -3387,6 +3676,8 @@ function showDoneOverlay(){
     ldap:'LDAP 目錄查詢完成，涵蓋 DNS、TCP、Bind、Search 與結果回傳。',
     echo:'Echo 測試完成，使用 UDP 無連線傳送並驗證回應一致。',
     pptp:'PPTP VPN 隧道建立完成，涵蓋 TCP 控制通道與 GRE 隧道封裝。',
+    dhcp:'DHCP DORA 流程完成，主機取得 IP、預設閘道、DNS 與 lease，網路設定就緒。',
+    nat:'NAT 連線完成：私有 IP 經 NAT 轉換為公網 IP，回程依 NAT 表反向轉換回 LAN。',
   };
   document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
@@ -3433,6 +3724,8 @@ function initSim() {
     else if(/^ldaps?:\/\//i.test(raw))   protocol = 'ldap';
     else if(/^echo:\/\//i.test(raw))     protocol = 'echo';
     else if(/^pptp:\/\//i.test(raw))     protocol = 'pptp';
+    else if(/^dhcp:\/\//i.test(raw))     protocol = 'dhcp';
+    else if(/^nat:\/\//i.test(raw))      protocol = 'nat';
     else if(/^http:\/\//i.test(raw))     protocol = 'http';
     else                                 protocol = 'https';
   }
@@ -3605,6 +3898,7 @@ document.getElementById('protocolSel').addEventListener('change', function() {
     ssh:'ssh://server.example.com', telnet:'telnet://router.example.com',
     ldap:'ldap://ldap.example.com', echo:'echo://192.168.1.50',
     pptp:'pptp://vpn.example.com',
+    dhcp:'dhcp://lan.local', nat:'nat://example.com',
   };
   document.getElementById('urlInput').placeholder = phMap[this.value] || 'https://example.com';
 });
