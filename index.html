@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v26.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v27.0</div>
     </div>
   </a>
 
@@ -721,7 +721,19 @@ function updateNodeLabels(protocol){
   const zl = document.getElementById('dnsZoneLabel');
   const zr = document.getElementById('dnsZoneRect');
   if(zl) zl.textContent = protocol==='smtp' && mode!=='cached' ? 'DNS MX LOOKUP' : (protocol==='snmp' ? 'STATIC / LOCAL RESOLVE' : zone.text);
-  if(zr) zr.setAttribute('opacity', zone.dimNodes.length>0 ? '.2' : '.5');
+  // DHCP doesn't involve DNS — hide the DNS resolution zone entirely.
+  const dhcpHidesDns = (protocol==='dhcp');
+  if(zr) {
+    zr.setAttribute('opacity', dhcpHidesDns ? '0' : (zone.dimNodes.length>0 ? '.2' : '.5'));
+    zr.style.display = dhcpHidesDns ? 'none' : '';
+  }
+  if(zl) zl.style.display = dhcpHidesDns ? 'none' : '';
+  // DHCP also doesn't use the resolver/recursive nodes — dim them.
+  ['resolver','recursive'].forEach(id=>{
+    const g = document.getElementById('nd-'+id);
+    if(!g) return;
+    if(dhcpHidesDns) g.style.opacity = '0.18';
+  });
 
   ['recursive'].forEach(id=>{
     const g = document.getElementById('nd-'+id);
@@ -782,8 +794,8 @@ function getStages(p, foundation) {
   if(p==='https')       stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','HTTP Request','Response','Render'];
   else if(p==='ftp')    stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
   else if(p==='smtp')   stages=['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
-  else if(p==='imap')   stages=['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
-  else if(p==='pop3')   stages=['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','POP3 Auth','Download','Complete'];
+  else if(p==='imap')   stages=['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','IMAP Login','Fetch Mail','Synced'];
+  else if(p==='pop3')   stages=['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','POP3 Auth','Download','Complete'];
   else if(p==='snmp')   stages=['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
   else if(p==='ssh')    stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Key Exchange','Authentication','Shell'];
   else if(p==='telnet') stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Negotiation','Login','Shell'];
@@ -946,7 +958,10 @@ function tcpStepsBuilder(port, scenario) {
       kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
       what:'三向交握完成，雙方進入 ESTABLISHED 狀態，可以開始傳輸應用層資料。',
       details:[
-        {k:'Flags',v:'ACK',c:'c-success'},{k:'Status',v:'ESTABLISHED',c:'c-success'},{k:'RTT',v:'~20ms'},
+        {k:'Flags',v:'ACK',c:'c-success'},
+        {k:'Seq',v:'1001 (Client ISN+1)'},
+        {k:'Ack',v:'5001 (Server ISN+1)'},
+        {k:'Status',v:'ESTABLISHED',c:'c-success'},{k:'RTT',v:'~20ms'},
       ],
       tech:'TCP ESTABLISHED 後，若為加密協定（HTTPS/IMAPS/SMTPS/FTPS），還需進行 TLS 握手（1–2 個 RTT）。TLS 1.3 將握手壓縮至 1 RTT。',
       fail:null,
@@ -1154,13 +1169,19 @@ function buildSmtpSteps(scenario, host) {
       from:'browser', to:'webserver', pkt:'AUTH', pktColor:'#C084FC',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'SMTP/TLS', kpiLat:'~ 50ms', kpiStatus:'AUTH OK',
-      what:'客戶端發送 STARTTLS 升級至 TLS 加密通道，再傳送 AUTH LOGIN（base64 編碼的用戶名與密碼）。伺服器回 235 Authentication Successful。',
+      what:'客戶端發送 STARTTLS 升級至 TLS 加密通道；TLS 握手完成後依 RFC 3207 §4.2 規定重新發送 EHLO（伺服器加密後回應的能力清單可能不同），再傳送 AUTH LOGIN（base64 用戶名/密碼）。伺服器回 235 OK。',
       details:[
-        {k:'C→S',v:'STARTTLS'},{k:'S→C',v:'220 Ready to start TLS'},
-        {k:'[TLS Handshake]',v:'TLS 1.3 established',c:'c-accent'},
-        {k:'C→S',v:'AUTH LOGIN'},{k:'S→C',v:'235 Authentication OK',c:'c-success'},
+        {k:'C→S',v:'STARTTLS'},
+        {k:'S→C',v:'220 Ready to start TLS',c:'c-info'},
+        {k:'[TLS 1.3 ClientHello]',v:'SNI='+host+', cipher suites, key share',c:'c-accent'},
+        {k:'[TLS 1.3 ServerHello+Cert]',v:'X25519 key share + Cert chain',c:'c-accent'},
+        {k:'[TLS 1.3 Finished]',v:'AEAD encrypted channel ready',c:'c-success'},
+        {k:'C→S',v:'EHLO mail.yourdomain.com (re-EHLO over TLS, RFC 3207)',c:'c-info'},
+        {k:'S→C',v:'250-AUTH LOGIN PLAIN ...'},
+        {k:'C→S',v:'AUTH LOGIN'},
+        {k:'S→C',v:'235 Authentication OK',c:'c-success'},
       ],
-      tech:'STARTTLS 是 Opportunistic TLS：在已建立的明文連線上升級加密，與 SMTPS（port 465，TLS from start）不同。AUTH LOGIN 以 base64 傳輸憑證（非加密），因此必須在 TLS 通道建立後才能使用。',
+      tech:'STARTTLS 是 Opportunistic TLS：在已建立的明文連線上升級加密，與 SMTPS（port 465，TLS from start）不同。re-EHLO 是 RFC 3207 強制要求 — 因為 TLS 握手完成後伺服器可能回應不同的能力清單（例如 AUTH 才解鎖）。AUTH LOGIN 以 base64 傳輸憑證（非加密），因此必須在 TLS 通道建立後才能使用。',
       fail:null,
       interview:'STARTTLS vs SMTPS（Implicit TLS）：STARTTLS 可能因降級攻擊被繞過（STRIPTLS 攻擊），Implicit TLS（port 465）更安全因為 TLS 在任何明文命令前即建立。Google Gmail 強制要求 TLS，若伺服器不支援會拒絕連線。SPF、DKIM、DMARC 是郵件驗證三劍客，面試必知。',
     },
@@ -1244,8 +1265,9 @@ function buildImapSteps(scenario, host) {
     },
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(993, scenario),
+    ...tlsStepsBuilder(host, 993, 4, 'IMAPS implicit TLS'),
     {
-      id:'imap-greeting', stageIdx:4,
+      id:'imap-greeting', stageIdx:5,
       title:'IMAP 伺服器問候', titleEN:'IMAP Server Greeting',
       protocol:'IMAPS (port 993)', layer:'Application', packetType:'* OK Greeting',
       badgeClass:'b-imap', badgeText:'IMAP',
@@ -1263,7 +1285,7 @@ function buildImapSteps(scenario, host) {
       interview:'IMAP 的標記系統讓多個命令可以 pipeline 發送而不需等待逐一回應（pipelining），提升效率。IDLE 命令（RFC 2177）讓伺服器在新郵件到達時主動通知客戶端，實現郵件推送，優於客戶端輪詢。',
     },
     {
-      id:'imap-login', stageIdx:4,
+      id:'imap-login', stageIdx:5,
       title:'IMAP LOGIN — 身份驗證', titleEN:'IMAP Authentication',
       protocol:'IMAP', layer:'Application', packetType:'LOGIN',
       badgeClass:'b-imap', badgeText:'IMAP',
@@ -1281,7 +1303,7 @@ function buildImapSteps(scenario, host) {
       interview:'Google 在 2022 年停止 Gmail 的 IMAP basic auth 支援，強制要求 OAuth2（App Password 或 OAuth token）。這是「Less Secure Apps」政策的一部分。OAuth2 for IMAP/SMTP 讓第三方應用不需要知道用戶密碼，符合最小權限原則。',
     },
     {
-      id:'imap-select', stageIdx:5,
+      id:'imap-select', stageIdx:6,
       title:'SELECT INBOX — 開啟信箱', titleEN:'IMAP SELECT Mailbox',
       protocol:'IMAP', layer:'Application', packetType:'SELECT',
       badgeClass:'b-imap', badgeText:'IMAP',
@@ -1300,7 +1322,7 @@ function buildImapSteps(scenario, host) {
       interview:'IMAP UIDVALIDITY 是快取一致性的關鍵：若 UIDVALIDITY 改變，客戶端必須清除快取重新同步。這在郵件遷移（如 Server 重建）後很重要。CONDSTORE/QRESYNC（RFC 7162）擴充讓客戶端可以增量同步，避免每次全量下載。',
     },
     {
-      id:'imap-fetch', stageIdx:5,
+      id:'imap-fetch', stageIdx:6,
       title:'FETCH — 取得郵件內容', titleEN:'IMAP FETCH Messages',
       protocol:'IMAP', layer:'Application', packetType:'FETCH',
       badgeClass:'b-imap', badgeText:'IMAP',
@@ -1319,7 +1341,7 @@ function buildImapSteps(scenario, host) {
       interview:'IMAP BODY[PEEK][] 讓客戶端取得郵件而不自動設定 \\Seen 旗標（已讀），保留閱讀狀態控制給使用者。IMAP SEARCH 命令讓伺服器端執行搜索，節省客戶端下載所有郵件的開銷，是企業郵件系統效能的關鍵。',
     },
     {
-      id:'imap-done', stageIdx:6,
+      id:'imap-done', stageIdx:7,
       title:'郵件同步完成 — LOGOUT', titleEN:'IMAP Sync Complete',
       protocol:'IMAP', layer:'Application', packetType:'LOGOUT',
       badgeClass:'b-imap', badgeText:'IMAP',
@@ -1379,8 +1401,9 @@ function buildPop3Steps(scenario, host) {
     },
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(995, scenario),
+    ...tlsStepsBuilder(host, 995, 4, 'POP3S implicit TLS'),
     {
-      id:'pop3-greeting', stageIdx:4,
+      id:'pop3-greeting', stageIdx:5,
       title:'POP3 +OK 問候', titleEN:'POP3 Server Greeting',
       protocol:'POP3S (port 995)', layer:'Application', packetType:'+OK Greeting',
       badgeClass:'b-pop3', badgeText:'POP3',
@@ -1398,7 +1421,7 @@ function buildPop3Steps(scenario, host) {
       interview:'POP3S（port 995）與 STARTTLS POP3（port 110）：POP3S 使用 Implicit TLS，連線一建立就加密；STARTTLS 先明文再升級。由於 port 110 的降級攻擊風險，建議使用 POP3S（port 995）。',
     },
     {
-      id:'pop3-auth', stageIdx:4,
+      id:'pop3-auth', stageIdx:5,
       title:'POP3 USER/PASS 認證', titleEN:'POP3 Authentication',
       protocol:'POP3', layer:'Application', packetType:'USER / PASS',
       badgeClass:'b-pop3', badgeText:'POP3',
@@ -1417,7 +1440,7 @@ function buildPop3Steps(scenario, host) {
       interview:'POP3 LOCK 機制：同一時間只允許一個 POP3 客戶端存取信箱（信箱鎖定）。這防止了多設備同時操作的競態條件，但也意味著第二台設備無法同時存取，這是 POP3 不適合多設備的根本原因之一。',
     },
     {
-      id:'pop3-stat', stageIdx:5,
+      id:'pop3-stat', stageIdx:6,
       title:'STAT — 查詢信箱狀態', titleEN:'POP3 STAT — Mailbox Info',
       protocol:'POP3', layer:'Application', packetType:'STAT',
       badgeClass:'b-pop3', badgeText:'POP3',
@@ -1435,7 +1458,7 @@ function buildPop3Steps(scenario, host) {
       interview:'POP3 UIDL 命令（RFC 1939 optional）允許客戶端為郵件指定持久 UID，實現「只下載新郵件」功能。這需要客戶端自行維護已下載 UID 列表，而非伺服器端管理。Thunderbird 等郵件客戶端用此方式讓 POP3 也能「保留伺服器備份」（設置不刪除郵件 + UIDL 追蹤）。',
     },
     {
-      id:'pop3-retr', stageIdx:6,
+      id:'pop3-retr', stageIdx:7,
       title:'RETR — 下載郵件並完成', titleEN:'POP3 RETR & Complete',
       protocol:'POP3', layer:'Application', packetType:'RETR / DELE',
       badgeClass:'b-pop3', badgeText:'POP3',
@@ -1573,6 +1596,74 @@ function buildSnmpSteps(scenario, host) {
   return S;
 }
 
+// ─── SHARED TLS 1.3 HANDSHAKE STEPS BUILDER ────────────
+// Used by HTTPS / IMAPS / POP3S — implicit TLS protocols where the TLS
+// handshake immediately follows the TCP handshake. (SMTP STARTTLS is
+// different: it upgrades an existing plaintext SMTP session, handled inline.)
+function tlsStepsBuilder(host, port, stageIdx, ctxLabel){
+  ctxLabel = ctxLabel || `port ${port}`;
+  return [
+    {
+      id:'tls-clienthello', stageIdx,
+      title:'TLS ClientHello', titleEN:'TLS 1.3 — ClientHello',
+      protocol:`TLS 1.3 (over TCP/${port})`, layer:'Presentation', packetType:'ClientHello',
+      badgeClass:'b-tls', badgeText:'TLS',
+      from:'browser', to:'webserver', pkt:'CHello', pktColor:'#84CC16',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TLS', kpiLat:'~ 1ms', kpiStatus:'CLIENT_HELLO',
+      what:`客戶端送出 ClientHello：宣告支援的 TLS 版本（≥1.2）、密碼套件清單、隨機數（client_random），並透過 SNI 表明要連到 ${host}。TLS 1.3 同時把自己選好的 key share（橢圓曲線公鑰）一併送出，省下一個 RTT。`,
+      details:[
+        {k:'TLS Ver',v:'1.3 (RFC 8446)'},
+        {k:'Context',v:ctxLabel},
+        {k:'SNI',v:host},
+        {k:'Cipher Suites',v:'TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, ...'},
+        {k:'Key Share',v:'X25519 (client public key)'},
+      ],
+      tech:'SNI 在 TLS 1.3 之前是明文，可被中間人窺探使用者連到哪個域名。Encrypted Client Hello (ECH, 草案) 將 SNI 加密。',
+      fail:null,
+      interview:'IMAPS/POP3S/SMTPS 與 HTTPS 共用同一套 TLS 握手機制，只是 ALPN 標識不同（IMAP 用 imap，POP3 用 pop3 等 RFC 7301 注冊識別）。',
+    },
+    {
+      id:'tls-serverhello', stageIdx,
+      title:'TLS ServerHello + 證書', titleEN:'ServerHello + Certificate + Verify',
+      protocol:'TLS 1.3', layer:'Presentation', packetType:'ServerHello + Encrypted Extensions',
+      badgeClass:'b-tls', badgeText:'TLS',
+      from:'webserver', to:'browser', pkt:'SHello+Cert', pktColor:'#84CC16',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TLS', kpiLat:'~ 25ms', kpiStatus:'SERVER_HELLO',
+      what:'伺服器回 ServerHello（選定 cipher 與 key share），雙方各自用 ECDHE 推出共享密鑰。隨後伺服器以共享密鑰加密送出 Certificate（X.509 鏈）、CertificateVerify（用私鑰簽 transcript hash 證明擁有此證書）以及 Finished。客戶端驗證證書鏈、有效期、域名匹配、CT log。',
+      details:[
+        {k:'Selected Cipher',v:'TLS_AES_128_GCM_SHA256'},
+        {k:'Key Share',v:'X25519 (server public key)',c:'c-info'},
+        {k:'Cert Chain',v:'leaf → intermediate → root CA',c:'c-success'},
+        {k:'Cert SAN',v:host},
+        {k:'OCSP Stapling',v:'attached'},
+      ],
+      tech:'TLS 1.3 把 Certificate / CertificateVerify / Finished 都放到 ServerHello 之後並加密；外人只看到「ServerHello + 一團密文」。對比 TLS 1.2 是兩個 RTT 且 Certificate 明文可見。',
+      fail:null,
+      interview:'證書驗證五件事：1) 簽章鏈接到信任根 2) 未過期 3) 域名匹配 (SAN/CN) 4) 未被吊銷 (OCSP/CRL) 5) Certificate Transparency log 中可查。任何一項失敗就是 NET::ERR_CERT_*。',
+    },
+    {
+      id:'tls-finished', stageIdx,
+      title:'TLS Finished — 加密通道就緒', titleEN:'TLS Finished (Encrypted Channel Ready)',
+      protocol:'TLS 1.3', layer:'Presentation', packetType:'Finished',
+      badgeClass:'b-tls', badgeText:'TLS',
+      from:'browser', to:'webserver', pkt:'Finished', pktColor:'#45D483',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TLS', kpiLat:'~ 1ms', kpiStatus:'TLS_OK',
+      what:'客戶端驗證 Server Finished 後回送自己的 Finished。從這一刻起，所有後續資料都以 AEAD（如 AES-128-GCM 或 ChaCha20-Poly1305）加密，整個 TLS 1.3 握手共 1 RTT 完成。',
+      details:[
+        {k:'Status',v:'Encrypted Application Data Ready',c:'c-success'},
+        {k:'AEAD',v:'AES-128-GCM'},
+        {k:'Total TLS',v:'~ 1 RTT'},
+      ],
+      tech:'TLS 1.3 額外提供 0-RTT (Early Data) — 重連同站台時客戶端可在第一個封包就發送加密請求，但因為缺乏抗重放保護，僅適用於冪等請求。',
+      fail:null,
+      interview:'TLS 1.2 → 1.3 的關鍵改進：移除不安全的 RSA key exchange、CBC mode 與 RC4；強制 forward secrecy；握手從 2 RTT 降到 1 RTT；握手中段就開始加密。',
+    },
+  ];
+}
+
 // ─── SHARED TCP 4-WAY TERMINATION STEPS BUILDER ─────────
 function tcpCloseStepsBuilder(stageIdx){
   stageIdx = (stageIdx==null) ? 6 : stageIdx;
@@ -1584,7 +1675,7 @@ function tcpCloseStepsBuilder(stageIdx){
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'browser', to:'webserver', pkt:'FIN', pktColor:'#F472B6',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'FIN_WAIT_1',
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'C: FIN_WAIT_1',
       what:'⚠️ 注意時序：畫面（render）已經呈現給使用者了，揮手是「事後清理」。HTTP/1.1 預設 keep-alive，這條 TCP 連線通常會被後續 CSS/JS/圖片請求重複使用，揮手可能延後數十秒到數分鐘才發生（idle timeout 或頁面關閉時）。當應用層決定不再需要連線，主動關閉方送出 FIN，進入 FIN_WAIT_1。',
       details:[
         {k:'Flags',v:'FIN, ACK',c:'c-info'},
@@ -1602,7 +1693,7 @@ function tcpCloseStepsBuilder(stageIdx){
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'webserver', to:'browser', pkt:'ACK', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'TCP', kpiLat:'~ 20ms', kpiStatus:'CLOSE_WAIT',
+      kpiProto:'TCP', kpiLat:'~ 20ms', kpiStatus:'S: CLOSE_WAIT',
       what:'伺服器收到 FIN 後立即回 ACK 確認，但「自己這方還想傳資料/還沒收尾」。伺服器進入 CLOSE_WAIT，客戶端進入 FIN_WAIT_2。',
       details:[
         {k:'Flags',v:'ACK',c:'c-info'},
@@ -1621,7 +1712,7 @@ function tcpCloseStepsBuilder(stageIdx){
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'webserver', to:'browser', pkt:'FIN', pktColor:'#F472B6',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'TCP', kpiLat:'~ 5ms', kpiStatus:'LAST_ACK',
+      kpiProto:'TCP', kpiLat:'~ 5ms', kpiStatus:'S: LAST_ACK',
       what:'伺服器處理完手邊資料後，自己也送 FIN 表示「我也結束了」。伺服器進入 LAST_ACK 狀態。',
       details:[
         {k:'Flags',v:'FIN, ACK',c:'c-info'},
@@ -1639,7 +1730,7 @@ function tcpCloseStepsBuilder(stageIdx){
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'browser', to:'webserver', pkt:'ACK', pktColor:'#45D483',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'TIME_WAIT',
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'C: TIME_WAIT',
       what:'客戶端對伺服器的 FIN 回最後一個 ACK，進入 TIME_WAIT 狀態（通常 2×MSL ≈ 60 秒）後完全釋放。伺服器收到 ACK 立即進入 CLOSED。',
       details:[
         {k:'Flags',v:'ACK',c:'c-success'},
@@ -1731,6 +1822,7 @@ function buildSshSteps(scenario, host){
         {k:'Cipher',v:'chacha20-poly1305@openssh.com'},
         {k:'MAC',v:'hmac-sha2-256-etm@openssh.com'},
         {k:'HostKey',v:'ssh-ed25519 (fingerprint pinned)',c:'c-success'},
+        {k:'Note',v:'實際是雙向多輪交換（KEXINIT C↔S、DH key C↔S、NEWKEYS C↔S），本步以單一動畫示意'},
       ],
       tech:'KEX 完成後流量切換到加密通道（NEWKEYS）。host key 驗證防 MITM：客戶端把伺服器公鑰指紋與 ~/.ssh/known_hosts 比對。',
       fail:null,
@@ -2082,12 +2174,18 @@ function buildPptpSteps(scenario, host){
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'PPP', kpiLat:'~ 50ms', kpiStatus: scenario==='auth-fail'?'AUTH FAIL':'TUNNEL READY',
       what: scenario==='auth-fail'
-        ? 'PPP CHAP 認證失敗。伺服器回 CHAP Failure，控制連線拆除。'
-        : '建立隧道前先進行 PPP LCP（Link Control Protocol）協商，再進行 MS-CHAPv2 認證，最後協商 MPPE（Microsoft Point-to-Point Encryption）金鑰。',
+        ? 'PPP 認證階段：CHAP 失敗，伺服器回 CHAP Failure，控制連線拆除。'
+        : 'PPTP 控制連線建立後，會在 GRE 隧道內跑一個完整的 PPP session。PPP 自身分三個子階段（皆為 PPP 內部協定，非 PPTP）：① LCP — 協商鏈路參數；② Auth — MS-CHAPv2 挑戰回應；③ NCP/CCP — 協商 IP 配置與 MPPE 加密。',
       details: scenario==='auth-fail'
-        ? [{k:'Auth',v:'MS-CHAPv2'},{k:'Result',v:'CHAP Failure',c:'c-error'}]
-        : [{k:'LCP',v:'auth=MS-CHAPv2, MRU=1500'},{k:'CHAP',v:'Success',c:'c-success'},{k:'MPPE',v:'128-bit RC4'}],
-      tech:'MS-CHAPv2 + MPPE 已被研究證實可在數小時內被破解（Marlinspike 2012），整個 PPTP 加密體系因此被視為不安全。',
+        ? [{k:'PPP Phase',v:'Authenticate (CHAP)',c:'c-info'},{k:'Auth',v:'MS-CHAPv2'},{k:'Result',v:'CHAP Failure',c:'c-error'}]
+        : [
+            {k:'① PPP LCP',v:'Link Control — auth=MS-CHAPv2, MRU=1500',c:'c-info'},
+            {k:'② PPP Auth',v:'MS-CHAPv2 challenge/response → Success',c:'c-success'},
+            {k:'③ PPP IPCP',v:'Network Control — internal IP=10.0.0.42'},
+            {k:'④ PPP CCP',v:'Compression Control — MPPE 128-bit RC4 negotiated',c:'c-success'},
+            {k:'Note',v:'以上全是 PPP 子協定；PPTP 只負責「把 PPP 包進 GRE」'},
+          ],
+      tech:'PPTP 對 PPP 的關係：PPTP 提供 Tunneling（控制+GRE 資料通道），PPP 在隧道內負責認證、壓縮、IP 分配。MPPE 是 PPP 的 CCP option，不是 PPTP 自己的功能。MS-CHAPv2 + MPPE 已被研究證實可在數小時內被破解（Marlinspike 2012），整個 PPTP 加密體系因此被視為不安全。',
       fail: scenario==='auth-fail'?'PPTP 認證失敗。但即使成功，PPTP/MS-CHAPv2 也已被攻破（chapcrack + cloudcracker）。應立刻遷移到 WireGuard 或 IKEv2。':null,
       interview:'VPN 選型：個人/團隊用 WireGuard（簡單、快、現代密碼）；企業混合場景常見 IKEv2/IPsec（與 Windows/iOS/Android 原生整合）；雲端 site-to-site 多用 IPsec。PPTP 唯一場景是和老舊裝置相容性測試。',
       isError: scenario==='auth-fail',
@@ -2143,13 +2241,14 @@ function buildDhcpSteps(scenario, host){
       title:'DHCPDISCOVER — 廣播找伺服器', titleEN:'DHCPDISCOVER (Broadcast)',
       protocol:'DHCP / UDP (port 67/68)', layer:'Application', packetType:'DISCOVER',
       badgeClass:'b-dhcp', badgeText:'DHCP',
-      from:'browser', to:'resolver', pkt:'DISCOVER', pktColor:'#22D3EE',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      from:'browser', to:'webserver', pkt:'DISCOVER', pktColor:'#22D3EE',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'DHCP', kpiLat:'~ 5ms', kpiStatus:'DISCOVER',
       what:'客戶端不知道伺服器是誰，所以走廣播：src 0.0.0.0:68 → dst 255.255.255.255:67。整個 LAN 段都會收到，DHCP 伺服器（通常就是 LAN 路由器）負責回應。',
       details:[
+        {k:'L2 dst MAC',v:'ff:ff:ff:ff:ff:ff (all hosts on LAN segment)',c:'c-info'},
         {k:'src IP:port',v:'0.0.0.0:68'},
-        {k:'dst IP:port',v:'255.255.255.255:67 (broadcast)'},
+        {k:'dst IP:port',v:'255.255.255.255:67 (limited broadcast)'},
         {k:'BOOTP op',v:'1 (BOOTREQUEST)'},
         {k:'Xid',v:'0x3A4F (transaction id)'},
         {k:'Options',v:'53=DISCOVER, 55=Parameter List (1,3,6,15)'},
@@ -2163,10 +2262,10 @@ function buildDhcpSteps(scenario, host){
       title:'DHCPOFFER — 伺服器提案', titleEN:'DHCPOFFER (Server proposes)',
       protocol:'DHCP / UDP', layer:'Application', packetType:'OFFER',
       badgeClass:'b-dhcp', badgeText:'DHCP',
-      from:'resolver', to:'browser', pkt:'OFFER', pktColor:'#22D3EE',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      from:'webserver', to:'browser', pkt:'OFFER', pktColor:'#22D3EE',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'DHCP', kpiLat:'~ 8ms', kpiStatus:'OFFER',
-      what:'DHCP 伺服器從可用 IP 池挑一個給你，把完整的網路設定打包寄回（仍以廣播或 unicast 到 MAC）。',
+      what:'DHCP 伺服器從可用 IP 池挑一個給你，把完整的網路設定打包寄回。回應方式由 client 在 DISCOVER 中設的 BROADCAST flag 決定：flag=1 → 廣播；flag=0 → 用 ARP 把封包單播到 client 的 MAC（即使 client 還沒 IP）。',
       details:[
         {k:'Offered IP',v:'192.168.1.42',c:'c-success'},
         {k:'Subnet Mask',v:'255.255.255.0'},
@@ -2174,6 +2273,7 @@ function buildDhcpSteps(scenario, host){
         {k:'DNS',v:'192.168.1.1, 8.8.8.8'},
         {k:'Lease',v:'7200s (2h)'},
         {k:'Server ID',v:'192.168.1.1'},
+        {k:'Reply mode',v:'依 BROADCAST flag：1=L2 broadcast / 0=unicast to client MAC',c:'c-info'},
       ],
       tech:'若 LAN 上有多台 DHCP 伺服器（rogue / 多 VLAN），客戶端可能收到多個 OFFER。客戶端通常選最先收到的。',
       fail:null,
@@ -2184,8 +2284,8 @@ function buildDhcpSteps(scenario, host){
       title:'DHCPREQUEST — 正式索取', titleEN:'DHCPREQUEST (Client commits)',
       protocol:'DHCP / UDP', layer:'Application', packetType:'REQUEST',
       badgeClass:'b-dhcp', badgeText:'DHCP',
-      from:'browser', to:'resolver', pkt:'REQUEST', pktColor:'#22D3EE',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      from:'browser', to:'webserver', pkt:'REQUEST', pktColor:'#22D3EE',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'DHCP', kpiLat:'~ 5ms', kpiStatus:'REQUEST',
       what:'客戶端正式跟「選定」的伺服器要那個 IP（仍走廣播，讓未被選中的其他 DHCP 伺服器知道可以收回提案）。',
       details:[
@@ -2204,8 +2304,8 @@ function buildDhcpSteps(scenario, host){
       title:'DHCPACK — 蓋章確認', titleEN:'DHCPACK (Server commits)',
       protocol:'DHCP / UDP', layer:'Application', packetType:'ACK',
       badgeClass:'b-dhcp', badgeText:'DHCP',
-      from:'resolver', to:'browser', pkt:'ACK', pktColor:'#45D483',
-      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      from:'webserver', to:'browser', pkt:'ACK', pktColor:'#45D483',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'DHCP', kpiLat:'~ 5ms', kpiStatus:'BOUND',
       what:'伺服器最終蓋章：IP 192.168.1.42 從現在起 7200 秒都是你的。客戶端進入 BOUND 狀態，套用所有設定。',
       details:[
@@ -2315,7 +2415,7 @@ function buildNatSteps(scenario, host){
         {k:'New src',    v:'203.0.113.5:60001',c:'c-success'},
         {k:'dst (unchanged)',v:'203.0.113.50:443'},
         {k:'NAT Table Entry',v:'192.168.1.42:51234 ⇄ 203.0.113.5:60001'},
-        {k:'Timeout',v:'TCP: 86400s (idle), UDP: ~30-300s'},
+        {k:'Timeout',v:'TCP idle: 1–5 天 (依平台 — Linux conntrack 5 天 / Cisco IOS 1 天)；UDP: ~30–300s'},
       ],
       tech:'NAPT (Network Address Port Translation) 是最常見的形式。路由器同時改 src IP 與 src port，讓多台 LAN 機器共用同一個公網 IP 不會撞。',
       fail:null,
@@ -2363,8 +2463,8 @@ function buildNatSteps(scenario, host){
       title:'LAN 客戶端收到回應', titleEN:'LAN Client Receives Reply',
       protocol:'TCP', layer:'Transport', packetType:'SYN-ACK',
       badgeClass:'b-tcp', badgeText:'TCP',
-      from:'webserver', to:'render', pkt:'OK', pktColor:'#45D483',
-      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
+      from:'webserver', to:'browser', pkt:'OK', pktColor:'#45D483',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
       what:'客戶端從它原本的角度看，封包就是「203.0.113.50:443 → 192.168.1.42:51234」 — 完全感受不到中間 NAT 的存在。後續 TCP/TLS/HTTP 流程一切正常。',
       details:[
@@ -2445,9 +2545,20 @@ function composeFoundation(appSteps, foundation, scenario, host, protocol){
       s.details = [...(s.details||[]), note];
       s.what = (s.what||'') + '<br><br>🏠 <b>Foundation: NAT</b> — 此封包同時經過家用路由器的 NAT 翻譯（'+(dir==='out'?'SNAT 出口':'DNAT 入口')+'）。對 TCP 而言透明，但若 NAT 表丟失條目此連線就斷了。';
     };
-    tag(result.find(s => s.id==='tcp-syn'),    'out');
-    tag(result.find(s => s.id==='tcp-synack'), 'in');
-    tag(result.find(s => s.id==='tcp-ack'),    'out');
+    // DNS query/response also crosses the LAN boundary — they get NATted too.
+    tag(result.find(s => s.id==='dns-query'),       'out');
+    tag(result.find(s => s.id==='dns-return'),      'in');
+    // TCP handshake (3 packets, all transit NAT)
+    tag(result.find(s => s.id==='tcp-syn'),         'out');
+    tag(result.find(s => s.id==='tcp-synack'),      'in');
+    tag(result.find(s => s.id==='tcp-ack'),         'out');
+    // TLS handshake (3 packets)
+    tag(result.find(s => s.id==='tls-clienthello'), 'out');
+    tag(result.find(s => s.id==='tls-serverhello'), 'in');
+    tag(result.find(s => s.id==='tls-finished'),    'out');
+    // App data
+    tag(result.find(s => s.id==='http-req'),        'out');
+    tag(result.find(s => s.id==='http-resp'),       'in');
   }
 
   // (2) DHCP prefix — prepend DORA, shift app stageIdx by 6
@@ -2586,7 +2697,9 @@ function buildSteps(scenario, host, protocol) {
       kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
       what:'瀏覽器回傳 ACK 確認 Server 的 SYN。三向交握完成，雙方進入 ESTABLISHED 狀態，可以開始傳輸應用層資料。',
       details:[
-        {k:'Flags',v:'ACK',c:'c-success'},{k:'Ack',v:'5001 (Server ISN+1)'},
+        {k:'Flags',v:'ACK',c:'c-success'},
+        {k:'Seq',v:'1001 (Client ISN+1)'},
+        {k:'Ack',v:'5001 (Server ISN+1)'},
         {k:'Status',v:'ESTABLISHED',c:'c-success'},{k:'RTT',v:'~20ms'},
       ],
       tech:`TCP ESTABLISHED 後，若為 HTTPS，還需進行 TLS 握手（1–2 個 RTT）。TLS 1.3 將 TLS 握手壓縮至 1 RTT，0-RTT 模式可進一步優化重連場景。`,
@@ -2608,7 +2721,7 @@ function buildSteps(scenario, host, protocol) {
           {k:'SNI',v:host},
           {k:'Cipher Suites',v:'TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, ...'},
           {k:'Key Share',v:'X25519 (client public key)'},
-          {k:'ALPN',v:'h2, http/1.1'},
+          {k:'ALPN offer',v:'http/1.1, h2 (browser advertises both)'},
         ],
         tech:'SNI 在 TLS 1.3 之前是明文的，可被中間人窺探使用者連到哪個域名。Encrypted Client Hello (ECH, 草案) 將 SNI 加密；Cloudflare/Chrome 已部分支援。',
         fail:null,
@@ -2647,9 +2760,9 @@ function buildSteps(scenario, host, protocol) {
           {k:'Status',v:'Encrypted Application Data Ready',c:'c-success'},
           {k:'AEAD',v:'AES-128-GCM'},
           {k:'Total TLS',v:'~ 1 RTT'},
-          {k:'ALPN Result',v:'h2 (HTTP/2 negotiated)'},
+          {k:'ALPN Result',v:'http/1.1 (HTTP/1.1 negotiated)'},
         ],
-        tech:'TLS 1.3 額外提供 0-RTT (Early Data) — 重連同站台時客戶端可在第一個封包就發送加密請求，但因為缺乏抗重放保護，僅適用於冪等請求。',
+        tech:'TLS 1.3 額外提供 0-RTT (Early Data) — 重連同站台時客戶端可在第一個封包就發送加密請求，但因為缺乏抗重放保護，僅適用於冪等請求。本模擬器 ALPN 結果為 http/1.1（HTTP/2 對應的多工 frame 格式不在此模擬器示範範圍）。',
         fail:null,
         interview:'TLS 1.2 → 1.3 的關鍵改進：移除不安全的 RSA key exchange、CBC mode 與 RC4；強制 forward secrecy；握手從 2 RTT 降到 1 RTT；握手中段就開始加密 (encrypts ServerHello onward)。HTTPS 效能首要優化就是升級到 TLS 1.3。',
       },
@@ -2685,7 +2798,7 @@ function buildSteps(scenario, host, protocol) {
       details:[
         {k:'Status',v: scenario==='server-slow'?'200 OK (3s delay)':'200 OK',c: scenario==='server-slow'?'c-warning':'c-success'},
         {k:'Content-Type',v:'text/html; charset=UTF-8'},{k:'Content-Length',v:'1256'},
-        {k:'Cache-Control',v:'max-age=3600'},{k:'Server',v:'ECS (nyb/1D2E)'},
+        {k:'Cache-Control',v:'max-age=3600'},{k:'Server',v:'nginx/1.24'},
       ],
       tech:'HTTP 狀態碼家族：1xx（資訊）、2xx（成功）、3xx（重定向）、4xx（客戶端錯誤）、5xx（伺服器錯誤）。Cache-Control: max-age=3600 告知瀏覽器可快取此回應 1 小時。',
       fail:null,
@@ -2902,6 +3015,22 @@ function drawTopology() {
     }
     edgesG.appendChild(path);
   });
+
+  // NAT badge (sits at e-bw midpoint; hidden until a NAT-related step fires)
+  const natBadge = svgEl('g', {id:'natBadge',display:'none'});
+  natBadge.appendChild(svgEl('rect',{x:294,y:24,width:48,height:22,rx:6,
+    fill:'rgba(251,146,60,.18)',stroke:'#FB923C','stroke-width':'1.4'}));
+  const natIcon = svgEl('text',{x:318,y:35,'text-anchor':'middle','dominant-baseline':'middle',
+    'font-size':'10','font-weight':'700','letter-spacing':'1.2',
+    fill:'#FB923C','font-family':'JetBrains Mono,monospace'});
+  natIcon.textContent='🏠 NAT';
+  natBadge.appendChild(natIcon);
+  const natSub = svgEl('text',{x:318,y:54,'text-anchor':'middle','dominant-baseline':'middle',
+    'font-size':'7','font-weight':'600','letter-spacing':'.8',
+    fill:'#FB923C','font-family':'JetBrains Mono,monospace','id':'natBadgeSub'});
+  natSub.textContent='SNAT';
+  natBadge.appendChild(natSub);
+  edgesG.appendChild(natBadge);
 
   // Nodes
   NODES.forEach(n=>{
@@ -3153,6 +3282,31 @@ function deriveTransportPort(step, protocol){
     out.port = typeof def.port==='number'?':'+def.port:def.port;
   }
   return out;
+}
+
+function updateNatBadge(){
+  const badge = document.getElementById('natBadge');
+  const sub   = document.getElementById('natBadgeSub');
+  if(!badge || !sub) return;
+  const step = state.steps[state.idx];
+  if(!step){ badge.setAttribute('display','none'); return; }
+  // Show for standalone NAT translation steps OR Foundation:NAT-tagged steps
+  let kind = null;
+  if(step.id==='nat-translate-out' || step.id==='nat-aug-out') kind='SNAT';
+  else if(step.id==='nat-translate-in' || step.id==='nat-aug-in') kind='DNAT';
+  else if(state.foundation==='nat' || state.foundation==='both'){
+    // Foundation NAT-tagged steps (annotations applied in composeFoundation)
+    const outIds = new Set(['dns-query','tcp-syn','tcp-ack','tls-clienthello','tls-finished','http-req']);
+    const inIds  = new Set(['dns-return','tcp-synack','tls-serverhello','http-resp']);
+    if(outIds.has(step.id)) kind='SNAT';
+    else if(inIds.has(step.id)) kind='DNAT';
+  }
+  if(kind){
+    badge.setAttribute('display','inline');
+    sub.textContent = kind;
+  } else {
+    badge.setAttribute('display','none');
+  }
 }
 
 function updatePortStrip(){
@@ -3737,6 +3891,7 @@ function applyStep(idx, onDone) {
   updateTcpInset();
   updateLayerTrack(step.layer);
   updatePortStrip();
+  updateNatBadge();
 
   if(step.from && step.to){
     animatePacket(step.from, step.to, step.pkt, step.pktColor, step.isError, ()=>{
@@ -3777,6 +3932,7 @@ function jumpTo(idx) {
   updateTcpInset();
   updateLayerTrack(step.layer);
   updatePortStrip();
+  updateNatBadge();
   document.getElementById('svgPacket').innerHTML='';
 }
 
@@ -3909,6 +4065,7 @@ function initSim() {
   updateTcpInset();
   updateLayerTrack(null);
   updatePortStrip();
+  updateNatBadge();
   resetAllVisuals();
   updateStageTabs();
   updateLeftSidebar();
@@ -3936,6 +4093,7 @@ function resetSim() {
   updateTcpInset();
   updateLayerTrack(null);
   updatePortStrip();
+  updateNatBadge();
   document.getElementById('nextBtn').disabled=true;
   document.getElementById('playBtn').disabled=true;
   document.getElementById('prevBtn').disabled=true;
@@ -4012,6 +4170,7 @@ ensureCloseInset();
 updateTransportInset();
 updateLayerTrack(null);
 updatePortStrip();
+updateNatBadge();
 
 // Init stage tabs (dynamic based on default protocol)
 updateStageTabs();
