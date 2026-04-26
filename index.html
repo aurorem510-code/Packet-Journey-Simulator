@@ -294,6 +294,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .b-echo{background:rgba(250,204,21,.12);color:#FACC15;border:1px solid rgba(250,204,21,.28)}
 .b-pptp{background:rgba(167,139,250,.12);color:#A78BFA;border:1px solid rgba(167,139,250,.28)}
 .b-udp{background:rgba(250,176,5,.12);color:#FAB005;border:1px solid rgba(250,176,5,.28)}
+.b-tls{background:rgba(132,204,22,.12);color:#84CC16;border:1px solid rgba(132,204,22,.28)}
 
 .rp-body{padding:16px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1}
 
@@ -364,9 +365,33 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .fade-in{animation:fadeSlideIn .25s ease-out}
 
 /* ─── RESPONSIVE ────────────────────────────────────── */
-@media(max-width:1100px){.app-body{grid-template-columns:240px 1fr 310px}}
-@media(max-width:860px){.app-body{grid-template-columns:1fr 280px}.left-sidebar{display:none}}
-@media(max-width:640px){.app-body{grid-template-columns:1fr}.right-panel{display:none}}
+@media(max-width:1280px){.app-body{grid-template-columns:240px 1fr 320px}}
+@media(max-width:1080px){.app-body{grid-template-columns:220px 1fr 290px}.kpi-grid{grid-template-columns:1fr}}
+@media(max-width:920px){
+  html,body{overflow:auto;height:auto;min-height:100%}
+  header{height:auto;padding:10px 14px;flex-wrap:wrap;gap:10px}
+  .url-form{order:3;width:100%;max-width:none;flex:0 0 100%}
+  .hdr-right{margin-left:0;flex-wrap:wrap;gap:6px}
+  .app-body{display:flex;flex-direction:column;overflow:visible;min-height:0}
+  .left-sidebar,.right-panel{
+    border-right:none;border-bottom:1px solid var(--border);
+    overflow:visible;max-height:none;
+  }
+  .center{min-height:60vh}
+  .topo-area{min-height:340px}
+  .kpi-grid{grid-template-columns:repeat(4,1fr)}
+}
+@media(max-width:560px){
+  .hdr-right .scenario-group label{display:none}
+  select.sel{padding:6px 24px 6px 8px;font-size:11px}
+  .btn{height:32px;padding:0 11px;font-size:11px}
+  .logo-title{font-size:12.5px}
+  .logo-sub{font-size:9px}
+  .kpi-grid{grid-template-columns:1fr 1fr}
+  .topo-area{min-height:260px}
+  .stage-row{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .stage-row .stage-tab{flex-shrink:0}
+}
 </style>
 </head>
 <body>
@@ -379,7 +404,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v13.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v14.0</div>
     </div>
   </a>
 
@@ -449,6 +474,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
           <div class="sc-row"><span class="sc-key">Target</span><span class="sc-val" id="scHost">—</span></div>
           <div class="sc-row"><span class="sc-key">Scenario</span><span class="sc-val" id="scScenario">—</span></div>
           <div class="sc-row"><span class="sc-key">Protocol</span><span class="sc-val" id="scProtocol">—</span></div>
+          <div class="sc-row" title="模擬目標距離 — 影響所有 RTT 數字"><span class="sc-key">Network</span><span class="sc-val" id="scNetwork">—</span></div>
           <div class="sc-row"><span class="sc-key">Steps</span><span class="sc-val" id="scSteps">—</span></div>
         </div>
       </div>
@@ -588,6 +614,10 @@ const DNS_ZONE_LABELS = {
   cached:   { text:'LOCAL CACHE HIT',dimNodes:['recursive'],dimEdges:['e-rr'] },
 };
 
+// Protocols where the "render" node represents the SAME machine as the client
+// (e.g. SSH terminal, SNMP manager dashboard) rather than a separate stage.
+const LOCAL_RENDER_PROTOCOLS = new Set(['ssh','telnet','ldap','snmp','echo']);
+
 function updateNodeLabels(protocol){
   const map = PROTOCOL_LABELS[protocol] || PROTOCOL_LABELS.https;
   ['browser','webserver','render'].forEach(id=>{
@@ -616,6 +646,38 @@ function updateNodeLabels(protocol){
     const e = document.getElementById(eid);
     if(e) e.style.opacity = zone.dimEdges.includes(eid) ? '0.2' : '';
   });
+
+  // Render node treatment: dim + mark "local" when presentation is on the
+  // client itself (SSH/Telnet/LDAP/SNMP/Echo), so it doesn't look like a
+  // remote third hop.
+  const isLocalRender = LOCAL_RENDER_PROTOCOLS.has(protocol);
+  const renderG = document.getElementById('nd-render');
+  const ews = document.getElementById('e-ws');
+  if(renderG) renderG.style.opacity = isLocalRender ? '0.55' : '1';
+  if(ews) {
+    ews.style.opacity     = isLocalRender ? '0.35' : '';
+    ews.style.strokeDasharray = isLocalRender ? '4 3' : '';
+  }
+  const renderTyp = document.getElementById('ntyp-render');
+  if(renderTyp){
+    const base = (PROTOCOL_LABELS[protocol]||PROTOCOL_LABELS.https).render[1];
+    renderTyp.textContent = isLocalRender ? base+' · local' : base;
+  }
+  // Add a "client-side" bracket badge above the render node for local-render protocols
+  let bracket = document.getElementById('localRenderHint');
+  if(isLocalRender){
+    if(!bracket){
+      bracket = svgEl('text',{id:'localRenderHint',
+        x:716,y:118,'text-anchor':'middle','font-size':'8.5','font-weight':'600',
+        'letter-spacing':'1.2',fill:'#94A3B8','font-family':'JetBrains Mono,monospace'});
+      bracket.textContent='⤺ CLIENT-SIDE';
+      const nodes=document.getElementById('svgNodes');
+      if(nodes) nodes.appendChild(bracket);
+    }
+    bracket.setAttribute('display','inline');
+  } else if(bracket){
+    bracket.setAttribute('display','none');
+  }
 }
 
 const EDGES_DEF = [
@@ -626,6 +688,7 @@ const EDGES_DEF = [
 ];
 
 function getStages(p) {
+  if(p==='https')  return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','HTTP Request','Response','Render'];
   if(p==='ftp')    return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
   if(p==='smtp')   return ['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
   if(p==='imap')   return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
@@ -2066,8 +2129,69 @@ function buildSteps(scenario, host, protocol) {
       fail:null,
       interview:'TCP 連線由 4-tuple（源 IP、源 Port、目標 IP、目標 Port）唯一確定。HTTP/1.1 的 keep-alive 允許複用同一條 TCP 連線處理多個請求，避免重複握手開銷。HTTP/2 更進一步，在同一條 TCP 連線上多路複用多個請求流。',
     },
+    ...(isHttps ? [
+      {
+        id:'tls-clienthello', stageIdx:4,
+        title:'TLS ClientHello', titleEN:'TLS 1.3 — ClientHello',
+        protocol:'TLS 1.3 (over TCP/443)', layer:'Presentation', packetType:'ClientHello',
+        badgeClass:'b-tls', badgeText:'TLS',
+        from:'browser', to:'webserver', pkt:'CHello', pktColor:'#84CC16',
+        activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+        kpiProto:'TLS', kpiLat:'~ 1ms', kpiStatus:'CLIENT_HELLO',
+        what:`瀏覽器送出 ClientHello：宣告支援的 TLS 版本（≥1.2）、密碼套件清單、隨機數（client_random），並透過 SNI 表明要連到 ${host}（讓同一 IP 上的多個 HTTPS 站台可區分）。TLS 1.3 同時把自己選好的 key share（橢圓曲線公鑰）一併送出，省下一個 RTT。`,
+        details:[
+          {k:'TLS Ver',v:'1.3 (RFC 8446)'},
+          {k:'SNI',v:host},
+          {k:'Cipher Suites',v:'TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, ...'},
+          {k:'Key Share',v:'X25519 (client public key)'},
+          {k:'ALPN',v:'h2, http/1.1'},
+        ],
+        tech:'SNI 在 TLS 1.3 之前是明文的，可被中間人窺探使用者連到哪個域名。Encrypted Client Hello (ECH, 草案) 將 SNI 加密；Cloudflare/Chrome 已部分支援。',
+        fail:null,
+        interview:'ClientHello 的 cipher suite 清單反映客戶端策略：是否啟用 forward secrecy（要求 ECDHE）、是否棄用 RSA key exchange、是否支援 0-RTT。掃描工具（如 ssllabs）就是從這個清單評分。',
+      },
+      {
+        id:'tls-serverhello', stageIdx:4,
+        title:'TLS ServerHello + 證書', titleEN:'ServerHello + Certificate + Verify',
+        protocol:'TLS 1.3', layer:'Presentation', packetType:'ServerHello + Encrypted Extensions',
+        badgeClass:'b-tls', badgeText:'TLS',
+        from:'webserver', to:'browser', pkt:'SHello+Cert', pktColor:'#84CC16',
+        activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+        kpiProto:'TLS', kpiLat:'~ 25ms', kpiStatus:'SERVER_HELLO',
+        what:'伺服器回 ServerHello（選定 cipher 與自己的 key share），雙方各自用 ECDHE 推出共享密鑰。隨後伺服器以共享密鑰加密送出 Certificate（X.509 鏈）、CertificateVerify（用私鑰簽 transcript hash 證明擁有此證書）以及 Finished。客戶端驗證證書鏈、有效期、域名匹配與 CT log。',
+        details:[
+          {k:'Selected Cipher',v:'TLS_AES_128_GCM_SHA256'},
+          {k:'Key Share',v:'X25519 (server public key)',c:'c-info'},
+          {k:'Cert Chain',v:'leaf → intermediate → root CA',c:'c-success'},
+          {k:'Cert SAN',v:host},
+          {k:'OCSP Stapling',v:'attached'},
+        ],
+        tech:'TLS 1.3 把 Certificate / CertificateVerify / Finished 都放到 ServerHello 之後並加密，外人只看到「ServerHello + 一團密文」。對比 TLS 1.2 是兩個 RTT 且 Certificate 明文可見。',
+        fail:null,
+        interview:'證書驗證五件事：1) 簽章鏈接到信任根 2) 未過期 3) 域名匹配 (SAN/CN) 4) 未被吊銷 (OCSP/CRL) 5) Certificate Transparency log 中可查（Chrome 強制）。任何一項失敗就是 NET::ERR_CERT_*。',
+      },
+      {
+        id:'tls-finished', stageIdx:4,
+        title:'TLS Finished — 加密通道就緒', titleEN:'TLS Finished (Encrypted Channel Ready)',
+        protocol:'TLS 1.3', layer:'Presentation', packetType:'Finished',
+        badgeClass:'b-tls', badgeText:'TLS',
+        from:'browser', to:'webserver', pkt:'Finished', pktColor:'#45D483',
+        activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+        kpiProto:'TLS', kpiLat:'~ 1ms', kpiStatus:'TLS_OK',
+        what:'客戶端驗證 Server Finished 後，回送自己的 Finished。從這一刻起，所有後續資料都以 AEAD（如 AES-128-GCM 或 ChaCha20-Poly1305）加密，整個 TLS 1.3 握手共 1 RTT 完成。',
+        details:[
+          {k:'Status',v:'Encrypted Application Data Ready',c:'c-success'},
+          {k:'AEAD',v:'AES-128-GCM'},
+          {k:'Total TLS',v:'~ 1 RTT'},
+          {k:'ALPN Result',v:'h2 (HTTP/2 negotiated)'},
+        ],
+        tech:'TLS 1.3 額外提供 0-RTT (Early Data) — 重連同站台時客戶端可在第一個封包就發送加密請求，但因為缺乏抗重放保護，僅適用於冪等請求。',
+        fail:null,
+        interview:'TLS 1.2 → 1.3 的關鍵改進：移除不安全的 RSA key exchange、CBC mode 與 RC4；強制 forward secrecy；握手從 2 RTT 降到 1 RTT；握手中段就開始加密 (encrypts ServerHello onward)。HTTPS 效能首要優化就是升級到 TLS 1.3。',
+      },
+    ] : []),
     {
-      id:'http-req', stageIdx:4,
+      id:'http-req', stageIdx: isHttps?5:4,
       title:'發送 HTTP Request', titleEN:'HTTP Request',
       protocol:proto, layer:'Application', packetType:'GET /',
       badgeClass:'b-http', badgeText: isHttps?'HTTPS':'HTTP',
@@ -2085,7 +2209,7 @@ function buildSteps(scenario, host, protocol) {
       interview:'HTTP 動詞語意很重要：GET（冪等、可快取）、POST（非冪等，有 Body）、PUT（冪等，完整替換）、PATCH（部分更新）、DELETE（刪除）。面試可提及 HTTP/2 的 Header Compression（HPACK）和多路複用，以及 HTTP/3（基於 QUIC/UDP）的零 RTT 連線建立。',
     },
     {
-      id:'http-resp', stageIdx:5,
+      id:'http-resp', stageIdx: isHttps?6:5,
       title:'接收 HTTP Response', titleEN:'HTTP Response',
       protocol:'HTTP/1.1', layer:'Application', packetType:'200 OK',
       badgeClass:'b-http', badgeText:'HTTP',
@@ -2104,7 +2228,7 @@ function buildSteps(scenario, host, protocol) {
       interview:'常見狀態碼：200 成功、301 永久重定向、304 未修改（使用快取）、401 未授權、403 禁止訪問、404 找不到、500 伺服器錯誤、503 服務不可用。維運場景中，502 Bad Gateway 通常代表上游服務故障；504 Gateway Timeout 代表上游超時未回應。',
     },
     {
-      id:'render', stageIdx:6,
+      id:'render', stageIdx: isHttps?7:6,
       title:'瀏覽器渲染頁面', titleEN:'Browser Rendering',
       protocol:'Browser Rendering Engine', layer:'Browser', packetType:'HTML→DOM→Paint',
       badgeClass:'b-render', badgeText:'RENDER',
@@ -2150,6 +2274,9 @@ const BEGINNER_ANALOGIES = {
   'tcp-syn':         '🤝 比喻：你打電話：「你在嗎？」（SYN 第 1 步）',
   'tcp-synack':      '☎️ 比喻：對方接起：「我在，你呢？」（SYN-ACK 第 2 步）',
   'tcp-ack':         '✅ 比喻：你回：「我也在，可以開始講話了。」（ACK 第 3 步，連線建立）',
+  'tls-clienthello': '🔒 比喻：你打給銀行說「我要對話，這是我的暗號清單，挑一個你也會的」。',
+  'tls-serverhello': '🪪 比喻：銀行回「就用這個暗號吧」並出示證件（證書），證明它真的是銀行不是冒牌的。',
+  'tls-finished':    '🔐 比喻：兩邊都換上保密耳機，從現在起說的每句話外人都只聽到雜音。',
   'tcp-fin1':        '👋 比喻：你說「我講完了，要掛了。」（FIN 第 1 步）',
   'tcp-ack1':        '☎️ 比喻：對方回「好，我聽到了，但等我也收一下。」（ACK 第 2 步）',
   'tcp-fin2':        '👋 比喻：對方也說「我這邊也講完了，要掛囉。」（FIN 第 3 步）',
@@ -2193,6 +2320,52 @@ const BEGINNER_ANALOGIES = {
   'pptp-setup':      '🔧 比喻：雙方協商加密與隧道參數，準備把 IP 封包包進信封。',
   'pptp-gre':        '🚇 比喻：GRE 像一條地下隧道，把整個 IP 封包再裝進另一個封包寄出去。',
 };
+
+// ─── NETWORK PROFILE (RTT scaling by host) ─────────────
+// Heuristically classify the target into a network distance band.
+// baseRtt is the canonical 1-RTT in ms; ~20ms = baseline used inside step
+// definitions. scaleStepLatencies rescales every "~Nms" string accordingly.
+function detectNetworkProfile(host){
+  const h = (host||'').toLowerCase().trim();
+  if(/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|::1$|localhost$)/.test(h))
+    return {key:'lan',     label:'🏠 LAN / Localhost',     baseRtt:1,   note:'同網段，幾乎零延遲'};
+  if(/^\d+\.\d+\.\d+\.\d+$/.test(h))
+    return {key:'ip',      label:'🛰 Direct IP',            baseRtt:35,  note:'未經 DNS 的 IP 連線'};
+  if(/\.(tw|jp|kr|hk|sg|cn|my|th|vn|ph|id)$/.test(h))
+    return {key:'asia',    label:'🌏 Asia (近)',             baseRtt:25,  note:'同區域，海底電纜路徑短'};
+  if(/\.(uk|de|fr|eu|it|es|nl|se|no|fi|dk|ch|pl|ie)$/.test(h))
+    return {key:'europe',  label:'🌍 Europe (遠)',           baseRtt:180, note:'跨歐亞，繞道海底骨幹'};
+  if(/\.(br|ar|cl|mx|pe|co|ve)$/.test(h))
+    return {key:'samerica',label:'🌎 South America (極遠)',  baseRtt:260, note:'需經北美中繼'};
+  if(/\.(au|nz|fj)$/.test(h))
+    return {key:'oceania', label:'🌏 Oceania',               baseRtt:140, note:'跨太平洋'};
+  if(/\.(za|ng|eg|ke|ma|gh)$/.test(h))
+    return {key:'africa',  label:'🌍 Africa',                baseRtt:300, note:'海纜稀疏，延遲高'};
+  // .com / .net / .org / .io / .dev / unknown TLD → assume CDN-anycast in NA region
+  return {key:'global',    label:'🌐 Global CDN (Anycast)',  baseRtt:75,  note:'CDN 邊緣節點，距離視快取命中而定'};
+}
+
+function scaleStepLatencies(S, profile){
+  const baseRtt = (profile && profile.baseRtt) || 20;
+  const factor  = baseRtt / 20;
+  const rewriteStr = s => {
+    if(typeof s !== 'string') return s;
+    // Match "~ 20ms" / "~120ms" / "~ 1ms" — leave "< 1ms" untouched
+    return s.replace(/~\s*(\d+(?:\.\d+)?)\s*ms/g, (_,n)=>{
+      const v = parseFloat(n);
+      const scaled = Math.max(1, Math.round(v * factor));
+      return '~'+scaled+'ms';
+    });
+  };
+  return S.map(step => {
+    const out = {...step};
+    if(out.kpiLat) out.kpiLat = rewriteStr(out.kpiLat);
+    if(Array.isArray(out.details)){
+      out.details = out.details.map(d => ({...d, v: rewriteStr(d.v)}));
+    }
+    return out;
+  });
+}
 
 function applyAnalogies(S){
   return S.map(step=>{
@@ -2681,6 +2854,9 @@ function updateLeftSidebar() {
 
   // Scenario card
   document.getElementById('scHost').textContent = state.host || '—';
+  const np = state.netProfile;
+  const scNet = document.getElementById('scNetwork');
+  if(scNet) scNet.textContent = np ? `${np.label} · ~${np.baseRtt}ms` : '—';
   const scNames = {normal:'Normal Flow',  'dns-fail':'DNS Fail', 'tcp-timeout':'TCP Timeout', 'server-slow':'Slow Server'};
   document.getElementById('scScenario').textContent = scNames[state.scenario] || '—';
   document.getElementById('scProtocol').textContent = (state.protocol||'https').toUpperCase();
@@ -3014,7 +3190,8 @@ function initSim() {
   const dnsModeEl=document.getElementById('dnsModeSel');
   state.dnsMode=dnsModeEl?dnsModeEl.value:'compact';
   if(protocol==='snmp') state.dnsMode='cached';
-  state.steps=applyAnalogies(buildSteps(state.scenario,state.host,state.protocol));
+  state.netProfile = detectNetworkProfile(host);
+  state.steps=scaleStepLatencies(applyAnalogies(buildSteps(state.scenario,state.host,state.protocol)), state.netProfile);
   state.idx=-1; state.pktCount=0; state.started=true;
 
   updateNodeLabels(state.protocol);
