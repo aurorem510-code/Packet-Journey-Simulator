@@ -404,7 +404,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v14.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v15.0</div>
     </div>
   </a>
 
@@ -2499,6 +2499,95 @@ function resetAllVisuals() {
   document.getElementById('svgPacket').innerHTML='';
 }
 
+// ─── OSI / TCP-IP LAYER TRACK ──────────────────────────
+// Each step has a `layer` field (Application / Presentation / Transport /
+// Network / Browser). We render a vertical lane on the left of the SVG; the
+// band matching the current step's layer lights up so learners always know
+// "which layer am I looking at right now".
+const LAYER_BAND_MAP = {
+  'Application':  'app',
+  'Browser':      'app',  // URL parse / render = browser-internal app layer
+  'Presentation': 'pres',
+  'Transport':    'tx',
+  'Network':      'net',
+};
+const LAYER_BANDS = [
+  { id:'app',  label:'L7', sub:'APP',     y:18,  h:72, color:'#FFB84D' },
+  { id:'pres', label:'L6', sub:'TLS',     y:94,  h:72, color:'#84CC16' },
+  { id:'tx',   label:'L4', sub:'TCP/UDP', y:170, h:72, color:'#4DA3FF' },
+  { id:'net',  label:'L3', sub:'IP',      y:246, h:72, color:'#A78BFA' },
+];
+
+function _hexAlpha(hex, a){
+  const m = hex.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
+  if(!m) return hex;
+  return `rgba(${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)},${a})`;
+}
+
+function drawLayerTrack(){
+  const svg = document.getElementById('topSvg');
+  if(!svg || document.getElementById('layerTrack')) return;
+  const g = svgEl('g', {id:'layerTrack'});
+  const ttl = svgEl('text', {
+    x:34, y:11, 'text-anchor':'middle',
+    'font-size':'7','font-weight':'700','letter-spacing':'1.4',
+    fill:'#475569','font-family':'JetBrains Mono,monospace'});
+  ttl.textContent='OSI';
+  g.appendChild(ttl);
+
+  LAYER_BANDS.forEach(b => {
+    const cell = svgEl('rect', {
+      id:'layer-cell-'+b.id, x:6, y:b.y, width:56, height:b.h, rx:8,
+      fill:'rgba(20,28,42,0.45)', stroke:'#2A3445',
+      'stroke-width':'1','stroke-dasharray':'3 2',
+    });
+    g.appendChild(cell);
+    const lbl = svgEl('text', {
+      id:'layer-lbl-'+b.id, x:34, y:b.y+b.h/2-3,
+      'text-anchor':'middle','dominant-baseline':'middle',
+      'font-size':'15','font-weight':'700',
+      fill:'#475569','font-family':'JetBrains Mono,monospace'});
+    lbl.textContent = b.label;
+    g.appendChild(lbl);
+    const sub = svgEl('text', {
+      id:'layer-sub-'+b.id, x:34, y:b.y+b.h/2+13,
+      'text-anchor':'middle','dominant-baseline':'middle',
+      'font-size':'8.5','font-weight':'600','letter-spacing':'0.8',
+      fill:'#475569','font-family':'JetBrains Mono,monospace'});
+    sub.textContent = b.sub;
+    g.appendChild(sub);
+  });
+  // Insert at bottom of stack so nodes/edges/insets paint above it.
+  const edges = document.getElementById('svgEdges');
+  if(edges) svg.insertBefore(g, edges);
+  else svg.appendChild(g);
+}
+
+function updateLayerTrack(activeLayer){
+  const bandId = activeLayer ? (LAYER_BAND_MAP[activeLayer] || null) : null;
+  LAYER_BANDS.forEach(b => {
+    const cell = document.getElementById('layer-cell-'+b.id);
+    const lbl  = document.getElementById('layer-lbl-'+b.id);
+    const sub  = document.getElementById('layer-sub-'+b.id);
+    if(!cell) return;
+    const active = b.id === bandId;
+    if(active){
+      cell.setAttribute('fill', _hexAlpha(b.color, 0.18));
+      cell.setAttribute('stroke', b.color);
+      cell.setAttribute('stroke-dasharray','');
+      cell.setAttribute('stroke-width','1.8');
+      cell.setAttribute('filter','');
+    } else {
+      cell.setAttribute('fill','rgba(20,28,42,0.45)');
+      cell.setAttribute('stroke','#2A3445');
+      cell.setAttribute('stroke-dasharray','3 2');
+      cell.setAttribute('stroke-width','1');
+    }
+    if(lbl) lbl.setAttribute('fill', active ? b.color : '#475569');
+    if(sub) sub.setAttribute('fill', active ? b.color : '#475569');
+  });
+}
+
 // ─── TRANSPORT INSET (TCP handshake / UDP datagram) ────
 const INSET_X=240, INSET_Y=222, INSET_W=320, INSET_H=110;
 const INSET_LX=INSET_X+50, INSET_RX=INSET_X+INSET_W-50;
@@ -3036,6 +3125,7 @@ function applyStep(idx, onDone) {
   updateRightPanel();
   updateButtons();
   updateTcpInset();
+  updateLayerTrack(step.layer);
 
   if(step.from && step.to){
     animatePacket(step.from, step.to, step.pkt, step.pktColor, step.isError, ()=>{
@@ -3074,6 +3164,7 @@ function jumpTo(idx) {
   updateRightPanel();
   updateButtons();
   updateTcpInset();
+  updateLayerTrack(step.layer);
   document.getElementById('svgPacket').innerHTML='';
 }
 
@@ -3196,6 +3287,7 @@ function initSim() {
 
   updateNodeLabels(state.protocol);
   updateTcpInset();
+  updateLayerTrack(null);
   resetAllVisuals();
   updateStageTabs();
   updateLeftSidebar();
@@ -3221,6 +3313,7 @@ function resetSim() {
   updateRightPanel();
   updateButtons();
   updateTcpInset();
+  updateLayerTrack(null);
   document.getElementById('nextBtn').disabled=true;
   document.getElementById('playBtn').disabled=true;
   document.getElementById('prevBtn').disabled=true;
@@ -3290,10 +3383,12 @@ document.addEventListener('keydown',e=>{
 //  BOOTSTRAP
 // ═══════════════════════════════════════════════════════
 drawTopology();
+drawLayerTrack();
 ensureTcpInset();
 ensureUdpInset();
 ensureCloseInset();
 updateTransportInset();
+updateLayerTrack(null);
 
 // Init stage tabs (dynamic based on default protocol)
 updateStageTabs();
