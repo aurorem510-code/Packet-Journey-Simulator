@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v18.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v19.0</div>
     </div>
   </a>
 
@@ -464,20 +464,32 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
       <label>Protocol</label>
       <select class="sel" id="protocolSel">
         <option value="auto">⚡ Auto</option>
-        <option value="https">🔒 HTTPS</option>
-        <option value="http">🌐 HTTP</option>
-        <option value="ftp">📁 FTP</option>
-        <option value="smtp">📤 SMTP</option>
-        <option value="imap">📥 IMAP</option>
-        <option value="pop3">📬 POP3</option>
-        <option value="snmp">📊 SNMP</option>
-        <option value="ssh">🔐 SSH</option>
-        <option value="telnet">⌨️ Telnet</option>
-        <option value="ldap">🗂 LDAP</option>
-        <option value="echo">🔁 Echo</option>
-        <option value="pptp">🛡 PPTP</option>
-        <option value="dhcp">📮 DHCP</option>
-        <option value="nat">🏠 NAT</option>
+        <optgroup label="── Web ──">
+          <option value="https">🔒 HTTPS</option>
+          <option value="http">🌐 HTTP</option>
+        </optgroup>
+        <optgroup label="── Mail ──">
+          <option value="smtp">📤 SMTP</option>
+          <option value="imap">📥 IMAP</option>
+          <option value="pop3">📬 POP3</option>
+        </optgroup>
+        <optgroup label="── Remote / Directory ──">
+          <option value="ssh">🔐 SSH</option>
+          <option value="telnet">⌨️ Telnet</option>
+          <option value="ldap">🗂 LDAP</option>
+          <option value="ftp">📁 FTP</option>
+        </optgroup>
+        <optgroup label="── Tooling ──">
+          <option value="snmp">📊 SNMP</option>
+          <option value="echo">🔁 Echo</option>
+        </optgroup>
+        <optgroup label="── VPN / Tunnel ──">
+          <option value="pptp">🛡 PPTP</option>
+        </optgroup>
+        <optgroup label="── Foundation (runs before / around any app) ──">
+          <option value="dhcp">📮 DHCP boot (DORA)</option>
+          <option value="nat">🏠 NAT translation</option>
+        </optgroup>
       </select>
     </div>
     <div class="scenario-group">
@@ -2094,7 +2106,7 @@ function buildDhcpSteps(scenario, host){
       from:null, to:'browser', pkt:'BOOT', pktColor:'#22D3EE',
       activeNodes:['browser'], activeEdges:[],
       kpiProto:'DHCP', kpiLat:'< 1ms', kpiStatus:'NO IP',
-      what:'裝置剛開機接上網路線/Wi-Fi。網卡有 MAC 但還沒有 IP，無法跟外界通訊（連預設閘道 192.168.1.1 都還不知道）。',
+      what:'⚠️ 注意：DHCP 不是跟 HTTPS/SSH 同層的應用協定，而是「裝置加入網路時的一次性開機程序」 — 它必須先跑完，後面所有 app 協定才有 IP 可用。<br><br>裝置剛開機接上網路線/Wi-Fi。網卡有 MAC 但還沒有 IP，無法跟外界通訊（連預設閘道 192.168.1.1 都還不知道）。',
       details:[
         {k:'MAC',v:'02:42:ac:11:00:02'},
         {k:'Current IP',v:'0.0.0.0',c:'c-warning'},
@@ -2220,7 +2232,7 @@ function buildNatSteps(scenario, host){
       from:null, to:'browser', pkt:'INIT', pktColor:'#FB923C',
       activeNodes:['browser'], activeEdges:[],
       kpiProto:'NAT', kpiLat:'< 1ms', kpiStatus:'LAN',
-      what:`家用/辦公室客戶端坐在私有網段（192.168.1.42），想連到外網的 ${host}。私有 IP 屬於 RFC 1918（10/8、172.16/12、192.168/16），不能在公網路由。`,
+      what:`⚠️ 注意：NAT 不是跟 HTTPS/SSH 同層的應用協定，而是「路由器在你封包出門時做的中間轉換」 — 對 app 完全透明。當你在家裡用 HTTPS、SSH、SMTP 任何協定，背後都會經過這個翻譯，平常根本看不到。本流程把它「攤開」讓你看清楚。<br><br>家用/辦公室客戶端坐在私有網段（192.168.1.42），想連到外網的 ${host}。私有 IP 屬於 RFC 1918（10/8、172.16/12、192.168/16），不能在公網路由。`,
       details:[
         {k:'Client',v:'192.168.1.42 (RFC 1918)'},
         {k:'Target',v:host+' (public)'},
