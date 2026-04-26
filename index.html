@@ -195,6 +195,41 @@ select.sel:focus{border-color:var(--accent)}
 .stage-chip.active{color:var(--accent);border-bottom-color:var(--accent)}
 .stage-chip.done{color:var(--success)}
 
+/* Transport / Port strip — shows the current step's transport + port */
+.port-strip{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0;
+  font-family:'JetBrains Mono',monospace;font-size:11px;
+}
+.ps-label{font-size:9.5px;font-weight:700;letter-spacing:1.5px;color:var(--text2);text-transform:uppercase}
+.ps-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  transition:all .25s;
+}
+.ps-chip .ps-k{font-size:9.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.6px}
+.ps-chip .ps-v{font-size:12px;font-weight:700;color:var(--text)}
+.ps-chip.tcp{background:rgba(77,163,255,.12);border-color:rgba(77,163,255,.45)}
+.ps-chip.tcp .ps-v{color:var(--info)}
+.ps-chip.udp{background:rgba(250,176,5,.12);border-color:rgba(250,176,5,.5)}
+.ps-chip.udp .ps-v{color:#FAB005}
+.ps-chip.layer-app{background:rgba(255,184,77,.10);border-color:rgba(255,184,77,.4)}
+.ps-chip.layer-app .ps-v{color:#FFB84D}
+.ps-chip.layer-pres{background:rgba(132,204,22,.10);border-color:rgba(132,204,22,.4)}
+.ps-chip.layer-pres .ps-v{color:#84CC16}
+.ps-chip.layer-tx{background:rgba(77,163,255,.10);border-color:rgba(77,163,255,.4)}
+.ps-chip.layer-tx .ps-v{color:var(--info)}
+.ps-chip.layer-net{background:rgba(167,139,250,.10);border-color:rgba(167,139,250,.4)}
+.ps-chip.layer-net .ps-v{color:#A78BFA}
+.ps-arrow{color:var(--text2);font-weight:700;letter-spacing:.5px}
+.ps-ref{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.ps-ref-lbl{font-size:9.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px}
+.ps-pill{
+  font-size:10px;padding:3px 7px;border-radius:6px;
+  background:var(--card);border:1px solid var(--border);color:var(--text2);
+}
+.ps-pill.active{color:var(--accent);border-color:var(--accent)}
+
 .topo-area{flex:1;display:flex;align-items:stretch;justify-content:center;padding:16px 20px;gap:14px;overflow:auto}
 .osi-rail{
   flex:0 0 auto;width:64px;display:flex;align-items:center;justify-content:center;
@@ -410,7 +445,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v16.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v17.0</div>
     </div>
   </a>
 
@@ -510,6 +545,19 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 
     <!-- Stage tabs -->
     <div class="stage-row" id="stageRow"></div>
+
+    <!-- Transport / Port live strip -->
+    <div class="port-strip" id="portStrip">
+      <span class="ps-label">Now</span>
+      <span class="ps-chip" id="psLayerChip"><span class="ps-k">Layer</span><span class="ps-v" id="psLayer">—</span></span>
+      <span class="ps-arrow">·</span>
+      <span class="ps-chip" id="psTransportChip"><span class="ps-k">Transport</span><span class="ps-v" id="psTransport">—</span></span>
+      <span class="ps-arrow">·</span>
+      <span class="ps-chip" id="psPortChip"><span class="ps-k">Port</span><span class="ps-v" id="psPort">—</span></span>
+      <span class="ps-arrow">·</span>
+      <span class="ps-chip" id="psDirChip"><span class="ps-k">Dir</span><span class="ps-v" id="psDir">—</span></span>
+      <span class="ps-ref" id="psRef"></span>
+    </div>
 
     <!-- SVG topology + OSI rail -->
     <div class="topo-area">
@@ -2603,6 +2651,122 @@ function updateLayerTrack(activeLayer){
   });
 }
 
+// ─── TRANSPORT / PORT LIVE STRIP ───────────────────────
+// Default port table per protocol (used as fallback when a step doesn't carry
+// its own port info, e.g. URL parse / render steps).
+const PROTOCOL_PORTS = {
+  https: [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'HTTPS', proto:'TCP', port:443, layer:'tx'}],
+  http:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'HTTP',  proto:'TCP', port:80,  layer:'tx'}],
+  ftp:   [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'CTRL',  proto:'TCP', port:21,  layer:'tx'}, {label:'DATA', proto:'TCP', port:20, layer:'tx'}],
+  smtp:  [{label:'DNS-MX',proto:'UDP', port:53,  layer:'tx'}, {label:'SMTP',  proto:'TCP', port:587, layer:'tx'}],
+  imap:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'IMAPS', proto:'TCP', port:993, layer:'tx'}],
+  pop3:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'POP3S', proto:'TCP', port:995, layer:'tx'}],
+  ssh:   [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'SSH',   proto:'TCP', port:22,  layer:'tx'}],
+  telnet:[{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'TELNET',proto:'TCP', port:23,  layer:'tx'}],
+  ldap:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'LDAP',  proto:'TCP', port:389, layer:'tx'}],
+  pptp:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'CTRL',  proto:'TCP', port:1723,layer:'tx'}, {label:'GRE',  proto:'GRE', port:'IP-47', layer:'net'}],
+  snmp:  [{label:'SNMP', proto:'UDP', port:161, layer:'tx'}],
+  echo:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'ECHO',  proto:'UDP', port:7,   layer:'tx'}],
+};
+
+const STEP_PORT_HINTS = [
+  {match:/^dns-/,             proto:'UDP', port:53},
+  {match:/^tls-/,             follow:true},  // use TCP+app port from protocol
+  {match:/^tcp-(syn|synack|ack|fin1|ack1|fin2|ack2)$/, follow:true},
+  {match:/^udp-/,             follow:true},
+  {match:/^http-/,            follow:true},
+  {match:/^ftp-/,             follow:true},
+  {match:/^smtp-/,            follow:true},
+  {match:/^imap-/,            follow:true},
+  {match:/^pop3-/,            follow:true},
+  {match:/^snmp-/,            proto:'UDP', port:161},
+  {match:/^ssh-/,             follow:true},
+  {match:/^telnet-/,          follow:true},
+  {match:/^ldap-/,            follow:true},
+  {match:/^pptp-(control|setup)$/, follow:true},
+  {match:/^pptp-gre$/,        proto:'GRE', port:'IP-47'},
+  {match:/^echo-verify$/,     proto:'UDP', port:7},
+];
+
+function deriveTransportPort(step, protocol){
+  const out = {transport:'—', port:'—', layer: step?.layer || '—', dir:'—'};
+  if(!step) return out;
+  // Direction
+  if(step.from && step.to){
+    if(step.from===step.to) out.dir='self';
+    else if(step.from==='browser') out.dir='C → S';
+    else if(step.to==='browser')   out.dir='S → C';
+    else                            out.dir=`${step.from}→${step.to}`;
+  } else if(step.from===null || step.to===null) {
+    out.dir='internal';
+  }
+  // 1. Try parsing "TCP (port 443)" / "UDP/161" patterns from step.protocol
+  const proto = step.protocol||'';
+  let m = proto.match(/(TCP|UDP)\s*\(\s*port\s*(\d+)\s*\)/i);
+  if(!m) m = proto.match(/(TCP|UDP)\s*\/\s*(\d+)/i);
+  if(m){ out.transport=m[1].toUpperCase(); out.port=':'+m[2]; return out; }
+  // 2. Step-id heuristics
+  for(const h of STEP_PORT_HINTS){
+    if(h.match.test(step.id||'')){
+      if(h.follow){
+        // Use protocol's primary app port
+        const ports = PROTOCOL_PORTS[protocol]||[];
+        const app = ports.find(p=>p.proto!=='UDP' || p.label==='SNMP' || p.label==='ECHO') || ports[0];
+        if(app){ out.transport=app.proto; out.port=typeof app.port==='number'?':'+app.port:app.port; return out; }
+      }
+      out.transport=h.proto; out.port=typeof h.port==='number'?':'+h.port:h.port;
+      return out;
+    }
+  }
+  // 3. Fallback: protocol's primary
+  const ports = PROTOCOL_PORTS[protocol]||[];
+  const def = ports[ports.length-1] || ports[0];
+  if(def){
+    out.transport = def.proto;
+    out.port = typeof def.port==='number'?':'+def.port:def.port;
+  }
+  return out;
+}
+
+function updatePortStrip(){
+  const step = state.steps[state.idx];
+  const info = deriveTransportPort(step, state.protocol);
+  const lEl = document.getElementById('psLayer');
+  const tEl = document.getElementById('psTransport');
+  const pEl = document.getElementById('psPort');
+  const dEl = document.getElementById('psDir');
+  const tChip = document.getElementById('psTransportChip');
+  const lChip = document.getElementById('psLayerChip');
+  if(lEl) lEl.textContent = info.layer;
+  if(tEl) tEl.textContent = info.transport;
+  if(pEl) pEl.textContent = info.port;
+  if(dEl) dEl.textContent = info.dir;
+  // Chip class for transport
+  if(tChip){
+    tChip.classList.remove('tcp','udp');
+    if(info.transport==='TCP') tChip.classList.add('tcp');
+    else if(info.transport==='UDP') tChip.classList.add('udp');
+  }
+  // Chip class for layer (matches OSI rail colors)
+  if(lChip){
+    lChip.classList.remove('layer-app','layer-pres','layer-tx','layer-net');
+    const band = LAYER_BAND_MAP[info.layer];
+    if(band) lChip.classList.add('layer-'+band);
+  }
+  // Reference pills (all ports the protocol uses) — highlight active one
+  const ref = document.getElementById('psRef');
+  if(ref){
+    const ports = PROTOCOL_PORTS[state.protocol]||[];
+    const activeKey = info.transport+''+info.port;
+    ref.innerHTML = '<span class="ps-ref-lbl">Protocol uses</span>' +
+      ports.map(p=>{
+        const portStr = typeof p.port==='number'?':'+p.port:p.port;
+        const active = (p.proto+portStr)===activeKey;
+        return `<span class="ps-pill${active?' active':''}">${p.label} · ${p.proto} ${portStr}</span>`;
+      }).join('');
+  }
+}
+
 // ─── TRANSPORT INSET (TCP handshake / UDP datagram) ────
 const INSET_X=240, INSET_Y=222, INSET_W=320, INSET_H=110;
 const INSET_LX=INSET_X+50, INSET_RX=INSET_X+INSET_W-50;
@@ -3141,6 +3305,7 @@ function applyStep(idx, onDone) {
   updateButtons();
   updateTcpInset();
   updateLayerTrack(step.layer);
+  updatePortStrip();
 
   if(step.from && step.to){
     animatePacket(step.from, step.to, step.pkt, step.pktColor, step.isError, ()=>{
@@ -3180,6 +3345,7 @@ function jumpTo(idx) {
   updateButtons();
   updateTcpInset();
   updateLayerTrack(step.layer);
+  updatePortStrip();
   document.getElementById('svgPacket').innerHTML='';
 }
 
@@ -3303,6 +3469,7 @@ function initSim() {
   updateNodeLabels(state.protocol);
   updateTcpInset();
   updateLayerTrack(null);
+  updatePortStrip();
   resetAllVisuals();
   updateStageTabs();
   updateLeftSidebar();
@@ -3329,6 +3496,7 @@ function resetSim() {
   updateButtons();
   updateTcpInset();
   updateLayerTrack(null);
+  updatePortStrip();
   document.getElementById('nextBtn').disabled=true;
   document.getElementById('playBtn').disabled=true;
   document.getElementById('prevBtn').disabled=true;
@@ -3404,6 +3572,7 @@ ensureUdpInset();
 ensureCloseInset();
 updateTransportInset();
 updateLayerTrack(null);
+updatePortStrip();
 
 // Init stage tabs (dynamic based on default protocol)
 updateStageTabs();
