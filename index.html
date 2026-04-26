@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v22.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v23.0</div>
     </div>
   </a>
 
@@ -2449,6 +2449,21 @@ function composeFoundation(appSteps, foundation, scenario, host, protocol){
   if(foundation==='dhcp' || foundation==='both'){
     const dhcp = buildDhcpSteps('normal', host).map(s => ({...s}));
     dhcp.forEach(s => { if(s.isLast) s.isLast = false; });
+    // The standalone last DHCP step (dhcp-up) animates a packet to the render
+    // node (which is labelled "Network Ready" in standalone mode). In
+    // Foundation mode the render node belongs to the *app* protocol, so
+    // lighting it here is misleading — keep dhcp-up confined to the browser.
+    const upStep = dhcp.find(s => s.id === 'dhcp-up');
+    if(upStep){
+      upStep.title       = '網路就緒 — 切換到 App 流程';
+      upStep.titleEN     = 'Network Ready — handing off to App flow';
+      upStep.from        = 'browser';
+      upStep.to          = 'browser';
+      upStep.activeNodes = ['browser'];
+      upStep.activeEdges = [];
+      upStep.pkt         = 'UP';
+      upStep.pktColor    = '#45D483';
+    }
     const SHIFT = 6;
     result = result.map(s => ({...s, stageIdx: (s.stageIdx||0) + SHIFT}));
     result = [...dhcp, ...result];
