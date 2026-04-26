@@ -379,7 +379,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v12.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v13.0</div>
     </div>
   </a>
 
@@ -1423,7 +1423,7 @@ function tcpCloseStepsBuilder(stageIdx){
       from:'browser', to:'webserver', pkt:'FIN', pktColor:'#F472B6',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'FIN_WAIT_1',
-      what:'資料傳輸完畢後，主動關閉方（通常是客戶端）送出 FIN，告知對方「我已沒有資料要傳了」。客戶端進入 FIN_WAIT_1 狀態。',
+      what:'⚠️ 注意時序：畫面（render）已經呈現給使用者了，揮手是「事後清理」。HTTP/1.1 預設 keep-alive，這條 TCP 連線通常會被後續 CSS/JS/圖片請求重複使用，揮手可能延後數十秒到數分鐘才發生（idle timeout 或頁面關閉時）。當應用層決定不再需要連線，主動關閉方送出 FIN，進入 FIN_WAIT_1。',
       details:[
         {k:'Flags',v:'FIN, ACK',c:'c-info'},
         {k:'Client State',v:'ESTABLISHED → FIN_WAIT_1'},
@@ -1961,9 +1961,15 @@ function injectTcpClose(S, protocol, scenario){
   if(scenario!=='normal') return S;
   if(S.some(s=>s.id==='tcp-fin1')) return S;
   const lastIdx = S.findIndex(s=>s.isLast);
-  if(lastIdx<=0) return S;
-  const closeStageIdx = S[lastIdx-1] ? S[lastIdx-1].stageIdx : S[lastIdx].stageIdx;
-  S.splice(lastIdx, 0, ...tcpCloseStepsBuilder(closeStageIdx));
+  if(lastIdx<0) return S;
+  const closeStageIdx = S[lastIdx].stageIdx;
+  const closeSteps = tcpCloseStepsBuilder(closeStageIdx);
+  // Render (or whatever the protocol's "presentation" step is) happens BEFORE
+  // TCP termination — the user sees the page first, then the connection
+  // closes (or in keep-alive, much later).
+  S[lastIdx].isLast = false;
+  closeSteps[closeSteps.length-1].isLast = true;
+  S.splice(lastIdx+1, 0, ...closeSteps);
   return S;
 }
 function buildSteps(scenario, host, protocol) {
