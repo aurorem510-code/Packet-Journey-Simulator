@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v24.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v25.0</div>
     </div>
   </a>
 
@@ -485,6 +485,10 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
         </optgroup>
         <optgroup label="── VPN / Tunnel ──">
           <option value="pptp">🛡 PPTP</option>
+        </optgroup>
+        <optgroup label="── Standalone foundation walkthrough ──">
+          <option value="dhcp">📮 DHCP boot (DORA, full)</option>
+          <option value="nat">🏠 NAT translation (full)</option>
         </optgroup>
       </select>
     </div>
@@ -1569,9 +1573,7 @@ function buildSnmpSteps(scenario, host) {
   return S;
 }
 
-// ─── SHARED TCP TERMINATION STEPS BUILDER (合併 3-way) ───
-// 教科書 4-way 合併成實作常見的 3-way：Server 在收到 FIN 後若無資料要傳，
-// 會把 ACK 與自己的 FIN 合併成單一 FIN+ACK 封包送回（中間那個純 ACK 步驟省略）。
+// ─── SHARED TCP 4-WAY TERMINATION STEPS BUILDER ─────────
 function tcpCloseStepsBuilder(stageIdx){
   stageIdx = (stageIdx==null) ? 6 : stageIdx;
   return [
@@ -1591,26 +1593,44 @@ function tcpCloseStepsBuilder(stageIdx){
       ],
       tech:'TCP 是全雙工，必須兩個方向各自關閉。第一個 FIN 只關閉 Client→Server 這一向，Server→Client 仍可繼續傳資料（半關閉狀態 half-close）。',
       fail:null,
-      interview:'教科書講 4 次（FIN, ACK, FIN, ACK），但實作上 Server 若無資料要傳常把中間的 ACK 與自己的 FIN 合併成 FIN+ACK，變成線上常見的 3 次揮手。',
+      interview:'TCP 結束需要 4 次（不像建立的 3 次）的關鍵：建立時 Server 可以把 ACK 與 SYN 合併送（SYN-ACK），但結束時 Server 收到 FIN 後可能還有資料要傳，因此 ACK 與 FIN 通常分兩次送。',
     },
     {
-      id:'tcp-finack', stageIdx,
-      title:'TCP FIN+ACK — 對端合併回應', titleEN:'TCP Termination — FIN+ACK (Server, merged)',
-      protocol:'TCP', layer:'Transport', packetType:'FIN+ACK',
+      id:'tcp-ack1', stageIdx,
+      title:'TCP ACK — 對 FIN 確認', titleEN:'TCP Termination — ACK (Server)',
+      protocol:'TCP', layer:'Transport', packetType:'ACK',
       badgeClass:'b-tcp', badgeText:'TCP',
-      from:'webserver', to:'browser', pkt:'FIN+ACK', pktColor:'#A78BFA',
+      from:'webserver', to:'browser', pkt:'ACK', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'TCP', kpiLat:'~ 20ms', kpiStatus:'LAST_ACK',
-      what:'伺服器一次完成兩件事：① ACK 確認剛才的 FIN（client→server 方向半關閉）② 自己也送 FIN（server→client 方向半關閉）。Server 直接從 ESTABLISHED 跳到 LAST_ACK；Client 也從 FIN_WAIT_1 直接到 TIME_WAIT 之前的 close 狀態。',
+      kpiProto:'TCP', kpiLat:'~ 20ms', kpiStatus:'CLOSE_WAIT',
+      what:'伺服器收到 FIN 後立即回 ACK 確認，但「自己這方還想傳資料/還沒收尾」。伺服器進入 CLOSE_WAIT，客戶端進入 FIN_WAIT_2。',
+      details:[
+        {k:'Flags',v:'ACK',c:'c-info'},
+        {k:'Server State',v:'ESTABLISHED → CLOSE_WAIT'},
+        {k:'Client State',v:'FIN_WAIT_1 → FIN_WAIT_2'},
+        {k:'Ack',v:'(client_seq + 1)'},
+      ],
+      tech:'CLOSE_WAIT 堆積是常見伺服器問題：若應用程式忘記在收到對端 FIN 後呼叫 close()，連線將永遠停留在 CLOSE_WAIT，最終耗盡 file descriptor。',
+      fail:null,
+      interview:'看到大量 CLOSE_WAIT 就是「我方應用沒有正確 close socket」的訊號（典型的程式 bug）；看到大量 TIME_WAIT 則是 short-lived 連線太多，通常無害但可調 net.ipv4.tcp_tw_reuse。',
+    },
+    {
+      id:'tcp-fin2', stageIdx,
+      title:'TCP FIN — 對方也關閉', titleEN:'TCP Termination — FIN (Server)',
+      protocol:'TCP', layer:'Transport', packetType:'FIN',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'webserver', to:'browser', pkt:'FIN', pktColor:'#F472B6',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 5ms', kpiStatus:'LAST_ACK',
+      what:'伺服器處理完手邊資料後，自己也送 FIN 表示「我也結束了」。伺服器進入 LAST_ACK 狀態。',
       details:[
         {k:'Flags',v:'FIN, ACK',c:'c-info'},
-        {k:'Merged from',v:'教科書的 ACK + FIN 兩步'},
-        {k:'Server State',v:'ESTABLISHED → LAST_ACK'},
-        {k:'Client State',v:'FIN_WAIT_1 → TIME_WAIT (after this ACK)'},
+        {k:'Server State',v:'CLOSE_WAIT → LAST_ACK'},
+        {k:'Direction',v:'Server → Client'},
       ],
-      tech:'4-way 與 3-way 的差別：若伺服器收到 FIN 時應用層還有資料要送，就會先回單純的 ACK（CLOSE_WAIT），等資料送完才送自己的 FIN（LAST_ACK）→ 4 步。否則合併成這個 FIN+ACK。',
+      tech:'這個 FIN 可能與前一步 ACK 合併（變成 FIN+ACK 一次送出），形成「3 次揮手」。HTTP keep-alive 短連線環境下常見，但教科書與本模擬器以 4 步呈現完整邏輯。',
       fail:null,
-      interview:'看到大量 CLOSE_WAIT 是「應用沒有正確呼叫 close()」的訊號 — Server 收到 FIN 但程式遲遲不關 socket，導致 ACK 已送、FIN 卻送不出去；連線堆積最終耗盡 file descriptor。',
+      interview:'若 Server 在 ACK 與 FIN 之間沒有要繼續傳的資料，會把兩者合併送出，看起來就像 3 次揮手。教科書講 4 次是邏輯模型，實作上常見 3 次。',
     },
     {
       id:'tcp-ack2', stageIdx,
@@ -2413,20 +2433,21 @@ function composeFoundation(appSteps, foundation, scenario, host, protocol){
   if(!foundation || foundation==='none') return appSteps;
   let result = appSteps.map(s => ({...s}));
 
-  // (1) NAT injection — wrap TCP handshake. Done first so DHCP shift logic
-  //     applies to NAT steps too (they need to live inside the app block).
+  // (1) NAT augmentation — annotate the existing TCP handshake steps with NAT
+  //     translation info (no new steps inserted, so 3-way handshake stays
+  //     visually at 3 steps). For a full NAT walkthrough use Protocol=NAT.
   if(foundation==='nat' || foundation==='both'){
-    let synIdx = result.findIndex(s => s.id==='tcp-syn');
-    if(synIdx >= 0){
-      const stage = result[synIdx].stageIdx;
-      result.splice(synIdx+1, 0, makeNatAugStep('out', stage));
-    }
-    // tcp-synack moved if syn matched
-    let synackIdx = result.findIndex(s => s.id==='tcp-synack');
-    if(synackIdx >= 0){
-      const stage = result[synackIdx].stageIdx;
-      result.splice(synackIdx+1, 0, makeNatAugStep('in', stage));
-    }
+    const tag = (s, dir) => {
+      if(!s) return;
+      const note = dir==='out'
+        ? {k:'NAT (SNAT)',v:'192.168.1.42:51234 → 203.0.113.5:60001',c:'c-warning'}
+        : {k:'NAT (DNAT)',v:'203.0.113.5:60001 → 192.168.1.42:51234',c:'c-warning'};
+      s.details = [...(s.details||[]), note];
+      s.what = (s.what||'') + '<br><br>🏠 <b>Foundation: NAT</b> — 此封包同時經過家用路由器的 NAT 翻譯（'+(dir==='out'?'SNAT 出口':'DNAT 入口')+'）。對 TCP 而言透明，但若 NAT 表丟失條目此連線就斷了。';
+    };
+    tag(result.find(s => s.id==='tcp-syn'),    'out');
+    tag(result.find(s => s.id==='tcp-synack'), 'in');
+    tag(result.find(s => s.id==='tcp-ack'),    'out');
   }
 
   // (2) DHCP prefix — prepend DORA, shift app stageIdx by 6
@@ -2723,8 +2744,9 @@ const BEGINNER_ANALOGIES = {
   'tls-serverhello': '🪪 比喻：銀行回「就用這個暗號吧」並出示證件（證書），證明它真的是銀行不是冒牌的。',
   'tls-finished':    '🔐 比喻：兩邊都換上保密耳機，從現在起說的每句話外人都只聽到雜音。',
   'tcp-fin1':        '👋 比喻：你說「我講完了，要掛了。」（FIN 第 1 步）',
-  'tcp-finack':      '🤝 比喻：對方一次說「我聽到了，我也講完了，掰。」（ACK 跟 FIN 合併成一個回應 — 第 2 步）',
-  'tcp-ack2':        '✅ 比喻：你回最後一聲「掰掰」然後掛電話，連線完全結束。（ACK 第 3 步）',
+  'tcp-ack1':        '☎️ 比喻：對方回「好，我聽到了，但等我也收一下。」（ACK 第 2 步）',
+  'tcp-fin2':        '👋 比喻：對方也說「我這邊也講完了，要掛囉。」（FIN 第 3 步）',
+  'tcp-ack2':        '✅ 比喻：你回最後一聲「掰掰」然後掛電話，連線完全結束。（ACK 第 4 步）',
   'http-req':        '🍔 比喻：你跟店員點餐：「我要首頁，謝謝。」',
   'http-resp':       '🥡 比喻：店員把餐點打包好遞給你 — 這就是網頁的 HTML。',
   'render':          '🎨 比喻：你把外帶餐打開擺盤、開動 — 瀏覽器把 HTML 畫成你看到的網頁。',
@@ -3229,7 +3251,7 @@ function ensureCloseInset(){
   const title=svgEl('text',{x:INSET_X+INSET_W/2,y:INSET_Y+13,'text-anchor':'middle',
     'font-size':'9','font-weight':'700','letter-spacing':'1.5',
     fill:'#F472B6','font-family':'JetBrains Mono,monospace'});
-  title.textContent='TCP TERMINATION (3-WAY, MERGED)';
+  title.textContent='TCP 4-WAY TERMINATION';
   g.appendChild(title);
   const cl=svgEl('text',{x:INSET_LX,y:INSET_Y+28,'text-anchor':'middle',
     'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
@@ -3243,9 +3265,10 @@ function ensureCloseInset(){
   g.appendChild(svgEl('line',{x1:INSET_RX,y1:INSET_Y+34,x2:INSET_RX,y2:INSET_Y+INSET_H-4,
     stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
   const arrows=[
-    {id:'tcp-fin1',   y:INSET_Y+58, dir:'r', label:'FIN  (FIN_WAIT_1)',           color:'#F472B6'},
-    {id:'tcp-finack', y:INSET_Y+78, dir:'l', label:'FIN+ACK  (LAST_ACK, merged)', color:'#A78BFA'},
-    {id:'tcp-ack2',   y:INSET_Y+98, dir:'r', label:'ACK  (TIME_WAIT → CLOSED)',   color:'#45D483'},
+    {id:'tcp-fin1', y:INSET_Y+48, dir:'r', label:'FIN  (FIN_WAIT_1)',     color:'#F472B6'},
+    {id:'tcp-ack1', y:INSET_Y+66, dir:'l', label:'ACK  (CLOSE_WAIT)',     color:'#A78BFA'},
+    {id:'tcp-fin2', y:INSET_Y+84, dir:'l', label:'FIN  (LAST_ACK)',       color:'#F472B6'},
+    {id:'tcp-ack2', y:INSET_Y+102,dir:'r', label:'ACK  (TIME_WAIT→CLOSED)',color:'#45D483'},
   ];
   arrows.forEach(a=>{
     const x1=a.dir==='r'?INSET_LX:INSET_RX, x2=a.dir==='r'?INSET_RX:INSET_LX;
@@ -3322,7 +3345,7 @@ function updateTransportInset(){
   const close=document.getElementById('closeInset');
 
   // Determine if we're in (or have reached) the TCP termination phase
-  const closeIds=['tcp-fin1','tcp-finack','tcp-ack2'];
+  const closeIds=['tcp-fin1','tcp-ack1','tcp-fin2','tcp-ack2'];
   let inCloseMode=false;
   if(transport==='tcp'){
     for(let i=0;i<=state.idx && i<state.steps.length;i++){
