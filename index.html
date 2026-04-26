@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v25.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v26.0</div>
     </div>
   </a>
 
@@ -581,7 +581,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
       <span class="ps-arrow">·</span>
       <span class="ps-chip" id="psPortChip"><span class="ps-k">Port</span><span class="ps-v" id="psPort">—</span></span>
       <span class="ps-arrow">·</span>
-      <span class="ps-chip" id="psDirChip"><span class="ps-k">Dir</span><span class="ps-v" id="psDir">—</span></span>
+      <span class="ps-chip" id="psDirChip"><span class="ps-k">Direction</span><span class="ps-v" id="psDir">—</span></span>
       <span class="ps-ref" id="psRef"></span>
     </div>
 
@@ -3120,12 +3120,12 @@ function deriveTransportPort(step, protocol){
   if(!step) return out;
   // Direction
   if(step.from && step.to){
-    if(step.from===step.to) out.dir='self';
-    else if(step.from==='browser') out.dir='C → S';
-    else if(step.to==='browser')   out.dir='S → C';
-    else                            out.dir=`${step.from}→${step.to}`;
+    if(step.from===step.to) out.dir='Internal';
+    else if(step.from==='browser') out.dir='Client → Server';
+    else if(step.to==='browser')   out.dir='Server → Client';
+    else                            out.dir=`${step.from} → ${step.to}`;
   } else if(step.from===null || step.to===null) {
-    out.dir='internal';
+    out.dir='Internal';
   }
   // 1. Try parsing "TCP (port 443)" / "UDP/161" patterns from step.protocol
   const proto = step.protocol||'';
