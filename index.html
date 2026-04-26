@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v21.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v22.0</div>
     </div>
   </a>
 
@@ -769,7 +769,10 @@ const EDGES_DEF = [
 ];
 
 function getStages(p, foundation) {
-  if(typeof foundation === 'undefined' && typeof state !== 'undefined') foundation = state.foundation;
+  if(typeof foundation === 'undefined'){
+    // `state` is declared later with const → typeof throws (TDZ) on early calls.
+    try { foundation = state.foundation; } catch(_){ foundation = 'none'; }
+  }
   foundation = foundation || 'none';
   let stages;
   if(p==='https')       stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','HTTP Request','Response','Render'];
