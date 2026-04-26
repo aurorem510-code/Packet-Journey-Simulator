@@ -379,7 +379,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v1.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v12.0</div>
     </div>
   </a>
 
@@ -1411,6 +1411,87 @@ function buildSnmpSteps(scenario, host) {
   return S;
 }
 
+// ─── SHARED TCP 4-WAY TERMINATION STEPS BUILDER ────────
+function tcpCloseStepsBuilder(stageIdx){
+  stageIdx = (stageIdx==null) ? 6 : stageIdx;
+  return [
+    {
+      id:'tcp-fin1', stageIdx,
+      title:'TCP FIN — 主動關閉', titleEN:'TCP Termination — FIN (Client)',
+      protocol:'TCP', layer:'Transport', packetType:'FIN',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'browser', to:'webserver', pkt:'FIN', pktColor:'#F472B6',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'FIN_WAIT_1',
+      what:'資料傳輸完畢後，主動關閉方（通常是客戶端）送出 FIN，告知對方「我已沒有資料要傳了」。客戶端進入 FIN_WAIT_1 狀態。',
+      details:[
+        {k:'Flags',v:'FIN, ACK',c:'c-info'},
+        {k:'Client State',v:'ESTABLISHED → FIN_WAIT_1'},
+        {k:'Direction',v:'Client → Server (半關閉)'},
+      ],
+      tech:'TCP 是全雙工，必須兩個方向各自關閉。第一個 FIN 只關閉 Client→Server 這一向，Server→Client 仍可繼續傳資料（半關閉狀態 half-close）。',
+      fail:null,
+      interview:'TCP 結束需要 4 次（不像建立的 3 次）的關鍵：建立時 Server 可以把 ACK 與 SYN 合併送（SYN-ACK），但結束時 Server 收到 FIN 後可能還有資料要傳，因此 ACK 與 FIN 通常分兩次送。',
+    },
+    {
+      id:'tcp-ack1', stageIdx,
+      title:'TCP ACK — 對 FIN 確認', titleEN:'TCP Termination — ACK (Server)',
+      protocol:'TCP', layer:'Transport', packetType:'ACK',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'webserver', to:'browser', pkt:'ACK', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 20ms', kpiStatus:'CLOSE_WAIT',
+      what:'伺服器收到 FIN 後立即回 ACK 確認，但「自己這方還想傳資料/還沒收尾」。伺服器進入 CLOSE_WAIT，客戶端進入 FIN_WAIT_2。',
+      details:[
+        {k:'Flags',v:'ACK',c:'c-info'},
+        {k:'Server State',v:'ESTABLISHED → CLOSE_WAIT'},
+        {k:'Client State',v:'FIN_WAIT_1 → FIN_WAIT_2'},
+        {k:'Ack',v:'(client_seq + 1)'},
+      ],
+      tech:'CLOSE_WAIT 堆積是常見伺服器問題：若應用程式忘記在收到對端 FIN 後呼叫 close()，連線將永遠停留在 CLOSE_WAIT，最終耗盡 file descriptor。',
+      fail:null,
+      interview:'看到大量 CLOSE_WAIT 就是「我方應用沒有正確 close socket」的訊號（典型的程式 bug）；看到大量 TIME_WAIT 則是 short-lived 連線太多，通常無害但可調 net.ipv4.tcp_tw_reuse。',
+    },
+    {
+      id:'tcp-fin2', stageIdx,
+      title:'TCP FIN — 對方也關閉', titleEN:'TCP Termination — FIN (Server)',
+      protocol:'TCP', layer:'Transport', packetType:'FIN',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'webserver', to:'browser', pkt:'FIN', pktColor:'#F472B6',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 5ms', kpiStatus:'LAST_ACK',
+      what:'伺服器處理完手邊資料後，自己也送 FIN 表示「我也結束了」。伺服器進入 LAST_ACK 狀態。',
+      details:[
+        {k:'Flags',v:'FIN, ACK',c:'c-info'},
+        {k:'Server State',v:'CLOSE_WAIT → LAST_ACK'},
+        {k:'Direction',v:'Server → Client'},
+      ],
+      tech:'這個 FIN 可能與前一步 ACK 合併（變成 FIN+ACK 一次送出），形成「3 次揮手」。HTTP keep-alive 短連線環境下常見。',
+      fail:null,
+      interview:'若 Server 在 ACK 與 FIN 之間沒有要繼續傳的資料，會把兩者合併送出，看起來就像 3 次揮手。教科書講 4 次是邏輯模型，實作上常見 3 次。',
+    },
+    {
+      id:'tcp-ack2', stageIdx,
+      title:'TCP ACK — 連線完全關閉', titleEN:'TCP Termination — Final ACK (Client)',
+      protocol:'TCP', layer:'Transport', packetType:'ACK',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'browser', to:'webserver', pkt:'ACK', pktColor:'#45D483',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'TIME_WAIT',
+      what:'客戶端對伺服器的 FIN 回最後一個 ACK，進入 TIME_WAIT 狀態（通常 2×MSL ≈ 60 秒）後完全釋放。伺服器收到 ACK 立即進入 CLOSED。',
+      details:[
+        {k:'Flags',v:'ACK',c:'c-success'},
+        {k:'Client State',v:'FIN_WAIT_2 → TIME_WAIT → CLOSED'},
+        {k:'Server State',v:'LAST_ACK → CLOSED',c:'c-success'},
+        {k:'TIME_WAIT',v:'~60s (2×MSL)'},
+      ],
+      tech:'TIME_WAIT 的兩個目的：1) 確保最後 ACK 送達（若遺失 Server 重傳 FIN 還能再回 ACK）；2) 避免相同四元組的舊封包污染新連線。',
+      fail:null,
+      interview:'高併發 short-lived 連線（如 ab 壓測）容易堆積 TIME_WAIT 耗盡本地 port。解法：tcp_tw_reuse、提高 ip_local_port_range、改用 keep-alive 或連線池、或在 LB 端結束連線。',
+    },
+  ];
+}
+
 // ─── SHARED UDP DATAGRAM STEPS BUILDER ─────────────────
 function udpStepsBuilder(port, label, color){
   color = color || '#FAB005';
@@ -1875,17 +1956,29 @@ function buildPptpSteps(scenario, host){
 }
 
 // ─── STEP DEFINITIONS ──────────────────────────────────
+function injectTcpClose(S, protocol, scenario){
+  if((TRANSPORT_MAP[protocol]||'tcp')!=='tcp') return S;
+  if(scenario!=='normal') return S;
+  if(S.some(s=>s.id==='tcp-fin1')) return S;
+  const lastIdx = S.findIndex(s=>s.isLast);
+  if(lastIdx<=0) return S;
+  const closeStageIdx = S[lastIdx-1] ? S[lastIdx-1].stageIdx : S[lastIdx].stageIdx;
+  S.splice(lastIdx, 0, ...tcpCloseStepsBuilder(closeStageIdx));
+  return S;
+}
 function buildSteps(scenario, host, protocol) {
-  if(protocol==='ftp')    return buildFtpSteps(scenario, host);
-  if(protocol==='smtp')   return buildSmtpSteps(scenario, host);
-  if(protocol==='imap')   return buildImapSteps(scenario, host);
-  if(protocol==='pop3')   return buildPop3Steps(scenario, host);
-  if(protocol==='snmp')   return buildSnmpSteps(scenario, host);
-  if(protocol==='ssh')    return buildSshSteps(scenario, host);
-  if(protocol==='telnet') return buildTelnetSteps(scenario, host);
-  if(protocol==='ldap')   return buildLdapSteps(scenario, host);
-  if(protocol==='echo')   return buildEchoSteps(scenario, host);
-  if(protocol==='pptp')   return buildPptpSteps(scenario, host);
+  let S;
+  if(protocol==='ftp')         S = buildFtpSteps(scenario, host);
+  else if(protocol==='smtp')   S = buildSmtpSteps(scenario, host);
+  else if(protocol==='imap')   S = buildImapSteps(scenario, host);
+  else if(protocol==='pop3')   S = buildPop3Steps(scenario, host);
+  else if(protocol==='snmp')   S = buildSnmpSteps(scenario, host);
+  else if(protocol==='ssh')    S = buildSshSteps(scenario, host);
+  else if(protocol==='telnet') S = buildTelnetSteps(scenario, host);
+  else if(protocol==='ldap')   S = buildLdapSteps(scenario, host);
+  else if(protocol==='echo')   S = buildEchoSteps(scenario, host);
+  else if(protocol==='pptp')   S = buildPptpSteps(scenario, host);
+  if(S) return injectTcpClose(S, protocol, scenario);
 
   const isHttps = protocol==='https';
   const port = isHttps ? 443 : 80;
@@ -1893,7 +1986,7 @@ function buildSteps(scenario, host, protocol) {
   const tld = host.split('.').pop();
   const domain = host.split('.').slice(-2).join('.');
 
-  const S = [
+  S = [
     {
       id:'url-parse', stageIdx:0,
       title:'解析 URL', titleEN:'URL Parsing',
@@ -2030,7 +2123,7 @@ function buildSteps(scenario, host, protocol) {
     const i = S.findIndex(s=>s.id==='tcp-syn');
     return S.slice(0, i+1);
   }
-  return S;
+  return injectTcpClose(S, protocol, scenario);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2051,6 +2144,10 @@ const BEGINNER_ANALOGIES = {
   'tcp-syn':         '🤝 比喻：你打電話：「你在嗎？」（SYN 第 1 步）',
   'tcp-synack':      '☎️ 比喻：對方接起：「我在，你呢？」（SYN-ACK 第 2 步）',
   'tcp-ack':         '✅ 比喻：你回：「我也在，可以開始講話了。」（ACK 第 3 步，連線建立）',
+  'tcp-fin1':        '👋 比喻：你說「我講完了，要掛了。」（FIN 第 1 步）',
+  'tcp-ack1':        '☎️ 比喻：對方回「好，我聽到了，但等我也收一下。」（ACK 第 2 步）',
+  'tcp-fin2':        '👋 比喻：對方也說「我這邊也講完了，要掛囉。」（FIN 第 3 步）',
+  'tcp-ack2':        '✅ 比喻：你回最後一聲「掰掰」然後掛電話，連線完全結束。（ACK 第 4 步）',
   'http-req':        '🍔 比喻：你跟店員點餐：「我要首頁，謝謝。」',
   'http-resp':       '🥡 比喻：店員把餐點打包好遞給你 — 這就是網頁的 HTML。',
   'render':          '🎨 比喻：你把外帶餐打開擺盤、開動 — 瀏覽器把 HTML 畫成你看到的網頁。',
@@ -2271,6 +2368,51 @@ function ensureTcpInset(){
   svg.appendChild(g);
 }
 
+function ensureCloseInset(){
+  const svg=document.getElementById('topSvg');
+  if(!svg || document.getElementById('closeInset')) return;
+  const g=svgEl('g',{id:'closeInset'});
+  g.appendChild(svgEl('rect',{x:INSET_X,y:INSET_Y,width:INSET_W,height:INSET_H,rx:10,
+    fill:'rgba(36,16,32,0.55)',stroke:'#3B1F2F','stroke-width':'1','stroke-dasharray':'3 2'}));
+  const title=svgEl('text',{x:INSET_X+INSET_W/2,y:INSET_Y+13,'text-anchor':'middle',
+    'font-size':'9','font-weight':'700','letter-spacing':'1.5',
+    fill:'#F472B6','font-family':'JetBrains Mono,monospace'});
+  title.textContent='TCP 4-WAY TERMINATION';
+  g.appendChild(title);
+  const cl=svgEl('text',{x:INSET_LX,y:INSET_Y+28,'text-anchor':'middle',
+    'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
+  cl.textContent='🌐 Client';
+  const cs=svgEl('text',{x:INSET_RX,y:INSET_Y+28,'text-anchor':'middle',
+    'font-size':'10.5','font-weight':'600',fill:'#E5E7EB','font-family':'Inter,sans-serif'});
+  cs.textContent='🖥 Server';
+  g.appendChild(cl);g.appendChild(cs);
+  g.appendChild(svgEl('line',{x1:INSET_LX,y1:INSET_Y+34,x2:INSET_LX,y2:INSET_Y+INSET_H-4,
+    stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
+  g.appendChild(svgEl('line',{x1:INSET_RX,y1:INSET_Y+34,x2:INSET_RX,y2:INSET_Y+INSET_H-4,
+    stroke:'#475569','stroke-width':'1','stroke-dasharray':'3 2'}));
+  const arrows=[
+    {id:'tcp-fin1', y:INSET_Y+48, dir:'r', label:'FIN  (FIN_WAIT_1)',     color:'#F472B6'},
+    {id:'tcp-ack1', y:INSET_Y+66, dir:'l', label:'ACK  (CLOSE_WAIT)',     color:'#A78BFA'},
+    {id:'tcp-fin2', y:INSET_Y+84, dir:'l', label:'FIN  (LAST_ACK)',       color:'#F472B6'},
+    {id:'tcp-ack2', y:INSET_Y+102,dir:'r', label:'ACK  (TIME_WAIT→CLOSED)',color:'#45D483'},
+  ];
+  arrows.forEach(a=>{
+    const x1=a.dir==='r'?INSET_LX:INSET_RX, x2=a.dir==='r'?INSET_RX:INSET_LX;
+    const ag=svgEl('g',{id:'closeArrow-'+a.id,opacity:'0.18'});
+    ag.appendChild(svgEl('line',{x1,y1:a.y,x2,y2:a.y,stroke:a.color,'stroke-width':'1.5'}));
+    const tip=a.dir==='r'?
+      `${x2-7},${a.y-4} ${x2},${a.y} ${x2-7},${a.y+4}`:
+      `${x2+7},${a.y-4} ${x2},${a.y} ${x2+7},${a.y+4}`;
+    ag.appendChild(svgEl('polygon',{points:tip,fill:a.color}));
+    const tx=svgEl('text',{x:(INSET_LX+INSET_RX)/2,y:a.y-4,'text-anchor':'middle',
+      'font-size':'9','font-weight':'600',fill:a.color,'font-family':'JetBrains Mono,monospace'});
+    tx.textContent=a.label;
+    ag.appendChild(tx);
+    g.appendChild(ag);
+  });
+  svg.appendChild(g);
+}
+
 function ensureUdpInset(){
   const svg=document.getElementById('topSvg');
   if(!svg || document.getElementById('udpInset')) return;
@@ -2322,11 +2464,48 @@ function ensureUdpInset(){
 function updateTransportInset(){
   ensureTcpInset();
   ensureUdpInset();
+  ensureCloseInset();
   const transport = (TRANSPORT_MAP && TRANSPORT_MAP[state.protocol]) || 'tcp';
   const tcp=document.getElementById('tcpInset');
   const udp=document.getElementById('udpInset');
-  if(tcp) tcp.setAttribute('display', transport==='udp' ? 'none' : 'inline');
-  if(udp) udp.setAttribute('display', transport==='udp' ? 'inline' : 'none');
+  const close=document.getElementById('closeInset');
+
+  // Determine if we're in (or have reached) the TCP termination phase
+  const closeIds=['tcp-fin1','tcp-ack1','tcp-fin2','tcp-ack2'];
+  let inCloseMode=false;
+  if(transport==='tcp'){
+    for(let i=0;i<=state.idx && i<state.steps.length;i++){
+      if(closeIds.includes(state.steps[i]?.id)){ inCloseMode=true; break; }
+    }
+  }
+
+  if(tcp)   tcp.setAttribute('display',   transport==='tcp' && !inCloseMode ? 'inline' : 'none');
+  if(close) close.setAttribute('display', transport==='tcp' &&  inCloseMode ? 'inline' : 'none');
+  if(udp)   udp.setAttribute('display',   transport==='udp' ? 'inline' : 'none');
+
+  if(inCloseMode){
+    const reached=new Set();
+    let current=null;
+    for(let i=0;i<=state.idx && i<state.steps.length;i++){
+      const s=state.steps[i];
+      if(s && closeIds.includes(s.id)){
+        reached.add(s.id);
+        if(i===state.idx) current=s.id;
+      }
+    }
+    closeIds.forEach(id=>{
+      const ag=document.getElementById('closeArrow-'+id);
+      if(!ag) return;
+      const line=ag.querySelector('line');
+      if(reached.has(id)){
+        ag.setAttribute('opacity', id===current ? '1':'0.75');
+        if(line) line.setAttribute('stroke-width', id===current ? '2.6':'1.7');
+      } else {
+        ag.setAttribute('opacity','0.18');
+        if(line) line.setAttribute('stroke-width','1.5');
+      }
+    });
+  }
 
   if(transport==='udp'){
     const ids=['udp-send','udp-echo'];
@@ -2930,6 +3109,7 @@ document.addEventListener('keydown',e=>{
 drawTopology();
 ensureTcpInset();
 ensureUdpInset();
+ensureCloseInset();
 updateTransportInset();
 
 // Init stage tabs (dynamic based on default protocol)
