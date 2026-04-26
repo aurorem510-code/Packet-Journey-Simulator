@@ -195,8 +195,13 @@ select.sel:focus{border-color:var(--accent)}
 .stage-chip.active{color:var(--accent);border-bottom-color:var(--accent)}
 .stage-chip.done{color:var(--success)}
 
-.topo-area{flex:1;display:flex;align-items:center;justify-content:center;padding:16px 20px;overflow:auto}
-#topSvg{width:100%;max-width:960px;height:auto;display:block}
+.topo-area{flex:1;display:flex;align-items:stretch;justify-content:center;padding:16px 20px;gap:14px;overflow:auto}
+.osi-rail{
+  flex:0 0 auto;width:64px;display:flex;align-items:center;justify-content:center;
+  background:rgba(20,28,42,0.35);border:1px solid var(--border);border-radius:12px;padding:6px;
+}
+.osi-rail svg{width:100%;height:100%;max-height:340px;display:block}
+#topSvg{flex:1;min-width:0;width:100%;max-width:960px;height:auto;display:block;align-self:center}
 
 /* SVG node styles (set via JS setAttribute) */
 .n-card{transition:all .25s}
@@ -388,7 +393,8 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .logo-title{font-size:12.5px}
   .logo-sub{font-size:9px}
   .kpi-grid{grid-template-columns:1fr 1fr}
-  .topo-area{min-height:260px}
+  .topo-area{min-height:260px;gap:8px;padding:10px 8px}
+  .osi-rail{width:48px;padding:4px}
   .stage-row{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
   .stage-row .stage-tab{flex-shrink:0}
 }
@@ -404,7 +410,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v15.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v16.0</div>
     </div>
   </a>
 
@@ -505,8 +511,11 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     <!-- Stage tabs -->
     <div class="stage-row" id="stageRow"></div>
 
-    <!-- SVG topology -->
+    <!-- SVG topology + OSI rail -->
     <div class="topo-area">
+      <div class="osi-rail" title="OSI / TCP-IP layer of the current step">
+        <svg id="osiSvg" viewBox="0 0 70 340" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
       <svg id="topSvg" viewBox="0 0 800 340" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="dotGrid" width="24" height="24" patternUnits="userSpaceOnUse">
@@ -2512,10 +2521,10 @@ const LAYER_BAND_MAP = {
   'Network':      'net',
 };
 const LAYER_BANDS = [
-  { id:'app',  label:'L7', sub:'APP',     y:18,  h:72, color:'#FFB84D' },
-  { id:'pres', label:'L6', sub:'TLS',     y:94,  h:72, color:'#84CC16' },
-  { id:'tx',   label:'L4', sub:'TCP/UDP', y:170, h:72, color:'#4DA3FF' },
-  { id:'net',  label:'L3', sub:'IP',      y:246, h:72, color:'#A78BFA' },
+  { id:'app',  label:'L7', sub:'APP',     y:30,  h:72, color:'#FFB84D' },
+  { id:'pres', label:'L6', sub:'TLS',     y:106, h:72, color:'#84CC16' },
+  { id:'tx',   label:'L4', sub:'TCP/UDP', y:182, h:72, color:'#4DA3FF' },
+  { id:'net',  label:'L3', sub:'IP',      y:258, h:72, color:'#A78BFA' },
 ];
 
 function _hexAlpha(hex, a){
@@ -2525,42 +2534,48 @@ function _hexAlpha(hex, a){
 }
 
 function drawLayerTrack(){
-  const svg = document.getElementById('topSvg');
+  const svg = document.getElementById('osiSvg');
   if(!svg || document.getElementById('layerTrack')) return;
+  // Clean any prior content (in case of re-mount)
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
   const g = svgEl('g', {id:'layerTrack'});
+  // Top heading
   const ttl = svgEl('text', {
-    x:34, y:11, 'text-anchor':'middle',
-    'font-size':'7','font-weight':'700','letter-spacing':'1.4',
-    fill:'#475569','font-family':'JetBrains Mono,monospace'});
+    x:35, y:14, 'text-anchor':'middle',
+    'font-size':'8','font-weight':'700','letter-spacing':'1.6',
+    fill:'#94A3B8','font-family':'JetBrains Mono,monospace'});
   ttl.textContent='OSI';
   g.appendChild(ttl);
+  const ttl2 = svgEl('text', {
+    x:35, y:24, 'text-anchor':'middle',
+    'font-size':'6.5','font-weight':'600','letter-spacing':'0.8',
+    fill:'#475569','font-family':'JetBrains Mono,monospace'});
+  ttl2.textContent='LAYER';
+  g.appendChild(ttl2);
 
   LAYER_BANDS.forEach(b => {
     const cell = svgEl('rect', {
-      id:'layer-cell-'+b.id, x:6, y:b.y, width:56, height:b.h, rx:8,
-      fill:'rgba(20,28,42,0.45)', stroke:'#2A3445',
+      id:'layer-cell-'+b.id, x:6, y:b.y, width:58, height:b.h, rx:8,
+      fill:'rgba(20,28,42,0.5)', stroke:'#2A3445',
       'stroke-width':'1','stroke-dasharray':'3 2',
     });
     g.appendChild(cell);
     const lbl = svgEl('text', {
-      id:'layer-lbl-'+b.id, x:34, y:b.y+b.h/2-3,
+      id:'layer-lbl-'+b.id, x:35, y:b.y+b.h/2-3,
       'text-anchor':'middle','dominant-baseline':'middle',
       'font-size':'15','font-weight':'700',
       fill:'#475569','font-family':'JetBrains Mono,monospace'});
     lbl.textContent = b.label;
     g.appendChild(lbl);
     const sub = svgEl('text', {
-      id:'layer-sub-'+b.id, x:34, y:b.y+b.h/2+13,
+      id:'layer-sub-'+b.id, x:35, y:b.y+b.h/2+13,
       'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'8.5','font-weight':'600','letter-spacing':'0.8',
+      'font-size':'8','font-weight':'600','letter-spacing':'0.8',
       fill:'#475569','font-family':'JetBrains Mono,monospace'});
     sub.textContent = b.sub;
     g.appendChild(sub);
   });
-  // Insert at bottom of stack so nodes/edges/insets paint above it.
-  const edges = document.getElementById('svgEdges');
-  if(edges) svg.insertBefore(g, edges);
-  else svg.appendChild(g);
+  svg.appendChild(g);
 }
 
 function updateLayerTrack(activeLayer){
