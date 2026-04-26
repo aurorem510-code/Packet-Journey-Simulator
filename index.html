@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v19.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v20.0</div>
     </div>
   </a>
 
@@ -486,10 +486,6 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
         <optgroup label="── VPN / Tunnel ──">
           <option value="pptp">🛡 PPTP</option>
         </optgroup>
-        <optgroup label="── Foundation (runs before / around any app) ──">
-          <option value="dhcp">📮 DHCP boot (DORA)</option>
-          <option value="nat">🏠 NAT translation</option>
-        </optgroup>
       </select>
     </div>
     <div class="scenario-group">
@@ -497,6 +493,15 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
       <select class="sel" id="dnsModeSel">
         <option value="compact" selected>🔹 Compact</option>
         <option value="cached">⚡ Cached</option>
+      </select>
+    </div>
+    <div class="scenario-group" title="Foundation: DHCP runs before any app; NAT wraps the TCP path transparently">
+      <label>Foundation</label>
+      <select class="sel" id="foundationSel">
+        <option value="none" selected>⚡ None</option>
+        <option value="dhcp">📮 + DHCP boot</option>
+        <option value="nat">🏠 Behind NAT</option>
+        <option value="both">📮🏠 DHCP + NAT</option>
       </select>
     </div>
     <div class="scenario-group">
@@ -532,6 +537,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
           <div class="sc-row"><span class="sc-key">Scenario</span><span class="sc-val" id="scScenario">—</span></div>
           <div class="sc-row"><span class="sc-key">Protocol</span><span class="sc-val" id="scProtocol">—</span></div>
           <div class="sc-row" title="模擬目標距離 — 影響所有 RTT 數字"><span class="sc-key">Network</span><span class="sc-val" id="scNetwork">—</span></div>
+          <div class="sc-row" title="Foundation: 是否在 app 流程外加上 DHCP / NAT"><span class="sc-key">Foundation</span><span class="sc-val" id="scFoundation">—</span></div>
           <div class="sc-row"><span class="sc-key">Steps</span><span class="sc-val" id="scSteps">—</span></div>
         </div>
       </div>
@@ -762,21 +768,30 @@ const EDGES_DEF = [
   { id:'e-ws',   from:'webserver', to:'render',    style:'solid',  curved:false },
 ];
 
-function getStages(p) {
-  if(p==='https')  return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','HTTP Request','Response','Render'];
-  if(p==='ftp')    return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
-  if(p==='smtp')   return ['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
-  if(p==='imap')   return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
-  if(p==='pop3')   return ['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','POP3 Auth','Download','Complete'];
-  if(p==='snmp')   return ['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
-  if(p==='ssh')    return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Key Exchange','Authentication','Shell'];
-  if(p==='telnet') return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Negotiation','Login','Shell'];
-  if(p==='ldap')   return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','LDAP Bind','Search','Result'];
-  if(p==='echo')   return ['Target Parse','DNS Lookup','IP Resolved','UDP Send','UDP Echo','Verify','Complete'];
-  if(p==='pptp')   return ['URL Parse','DNS Lookup','IP Resolved','TCP Control','PPTP Setup','GRE Tunnel','Connected'];
-  if(p==='dhcp')   return ['Boot','DISCOVER','OFFER','REQUEST','ACK','Network Up'];
-  if(p==='nat')    return ['LAN Origin','DNS','SYN @ NAT','Translate Out','Public Leg','Translate In','Established'];
-  return ['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
+function getStages(p, foundation) {
+  if(typeof foundation === 'undefined' && typeof state !== 'undefined') foundation = state.foundation;
+  foundation = foundation || 'none';
+  let stages;
+  if(p==='https')       stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','TLS Handshake','HTTP Request','Response','Render'];
+  else if(p==='ftp')    stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','FTP Auth','Data Transfer','Complete'];
+  else if(p==='smtp')   stages=['Addr Parse','DNS MX Lookup','IP Resolved','TCP Handshake','SMTP Hello','Email Transfer','Delivered'];
+  else if(p==='imap')   stages=['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','IMAP Login','Fetch Mail','Synced'];
+  else if(p==='pop3')   stages=['Addr Parse','DNS Lookup','IP Resolved','TCP Handshake','POP3 Auth','Download','Complete'];
+  else if(p==='snmp')   stages=['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
+  else if(p==='ssh')    stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Key Exchange','Authentication','Shell'];
+  else if(p==='telnet') stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Negotiation','Login','Shell'];
+  else if(p==='ldap')   stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','LDAP Bind','Search','Result'];
+  else if(p==='echo')   stages=['Target Parse','DNS Lookup','IP Resolved','UDP Send','UDP Echo','Verify','Complete'];
+  else if(p==='pptp')   stages=['URL Parse','DNS Lookup','IP Resolved','TCP Control','PPTP Setup','GRE Tunnel','Connected'];
+  else if(p==='dhcp')   stages=['Boot','DISCOVER','OFFER','REQUEST','ACK','Network Up'];
+  else if(p==='nat')    stages=['LAN Origin','DNS','SYN @ NAT','Translate Out','Public Leg','Translate In','Established'];
+  else                  stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
+
+  // Foundation prefix: DHCP boot prepends 6 stages to any app protocol
+  if((foundation==='dhcp' || foundation==='both') && p!=='dhcp' && p!=='nat'){
+    stages = ['Boot','DISCOVER','OFFER','REQUEST','ACK','Net Up', ...stages];
+  }
+  return stages;
 }
 
 // ─── TRANSPORT MAP (TCP vs UDP visualization) ──────────
@@ -2359,6 +2374,85 @@ function buildNatSteps(scenario, host){
   return S;
 }
 
+// ─── FOUNDATION COMPOSER (DHCP prefix + NAT injection) ──
+// DHCP runs ONCE before any app gets an IP. NAT happens transparently around
+// the TCP path. Both can decorate any selected app protocol.
+function makeNatAugStep(direction, stageIdx){
+  if(direction==='out'){
+    return {
+      id:'nat-aug-out', stageIdx,
+      title:'NAT 出口翻譯（SNAT）', titleEN:'NAT Outbound Translation',
+      protocol:'NAT / NAPT', layer:'Network', packetType:'SNAT',
+      badgeClass:'b-nat', badgeText:'NAT',
+      from:'browser', to:'webserver', pkt:'SNAT', pktColor:'#FB923C',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NAT', kpiLat:'~ 0.5ms', kpiStatus:'SNAT',
+      what:'封包離開 LAN 前，路由器 NAT 把 src 192.168.1.42:51234 改寫為 203.0.113.5:60001 並建表。對 TCP 看起來「同一條連線」，實際上四元組已被路由器改變。',
+      details:[
+        {k:'Original src',v:'192.168.1.42:51234'},
+        {k:'Translated src',v:'203.0.113.5:60001',c:'c-success'},
+        {k:'NAT Table',v:'192.168.1.42:51234 ⇄ 203.0.113.5:60001'},
+        {k:'Note',v:'這一步在純 HTTPS 流程中看不見 — 是 Foundation:NAT 把它「攤開」了'},
+      ],
+      tech:'每條 TCP 連線都會經歷 SNAT（出口）+ DNAT（入口）。實作上由路由器的 conntrack 模組維護表項，到期或重啟即遺失。',
+      fail:null,
+      interview:'NAT 對使用者透明，對工程師不透明：debug source IP 不對、conntrack 表滿、idle timeout 殺連線、CGNAT 折磨等問題都源自 NAT。',
+    };
+  } else {
+    return {
+      id:'nat-aug-in', stageIdx,
+      title:'NAT 入口反向翻譯（DNAT）', titleEN:'NAT Inbound Translation',
+      protocol:'NAT / NAPT', layer:'Network', packetType:'DNAT',
+      badgeClass:'b-nat', badgeText:'NAT',
+      from:'webserver', to:'browser', pkt:'DNAT', pktColor:'#FB923C',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NAT', kpiLat:'~ 0.5ms', kpiStatus:'DNAT',
+      what:'伺服器把回應送到公網 NAT IP（203.0.113.5:60001）。NAT 路由器查表，把 dst 還原為 192.168.1.42:51234 後丟回 LAN，客戶端才收得到 SYN-ACK。',
+      details:[
+        {k:'Server sent dst',v:'203.0.113.5:60001'},
+        {k:'NAT lookup',v:'192.168.1.42:51234',c:'c-info'},
+        {k:'Forwarded to',v:'192.168.1.42:51234',c:'c-success'},
+      ],
+      tech:'若 NAT 表沒有對應條目（剛重啟、idle 太久被清掉），這個 SYN-ACK 會被直接丟棄 — 這是「家用路由器斷電後所有連線斷掉」的根因。',
+      fail:null,
+      interview:'手機 idle 久了 push 不到，常見原因之一就是 NAT idle timeout。LINE/IG 用心跳維持條目就是為這個。',
+    };
+  }
+}
+
+function composeFoundation(appSteps, foundation, scenario, host, protocol){
+  // Standalone DHCP/NAT protocol mode → don't double-apply foundation
+  if(protocol==='dhcp' || protocol==='nat') return appSteps;
+  if(!foundation || foundation==='none') return appSteps;
+  let result = appSteps.map(s => ({...s}));
+
+  // (1) NAT injection — wrap TCP handshake. Done first so DHCP shift logic
+  //     applies to NAT steps too (they need to live inside the app block).
+  if(foundation==='nat' || foundation==='both'){
+    let synIdx = result.findIndex(s => s.id==='tcp-syn');
+    if(synIdx >= 0){
+      const stage = result[synIdx].stageIdx;
+      result.splice(synIdx+1, 0, makeNatAugStep('out', stage));
+    }
+    // tcp-synack moved if syn matched
+    let synackIdx = result.findIndex(s => s.id==='tcp-synack');
+    if(synackIdx >= 0){
+      const stage = result[synackIdx].stageIdx;
+      result.splice(synackIdx+1, 0, makeNatAugStep('in', stage));
+    }
+  }
+
+  // (2) DHCP prefix — prepend DORA, shift app stageIdx by 6
+  if(foundation==='dhcp' || foundation==='both'){
+    const dhcp = buildDhcpSteps('normal', host).map(s => ({...s}));
+    dhcp.forEach(s => { if(s.isLast) s.isLast = false; });
+    const SHIFT = 6;
+    result = result.map(s => ({...s, stageIdx: (s.stageIdx||0) + SHIFT}));
+    result = [...dhcp, ...result];
+  }
+  return result;
+}
+
 // ─── STEP DEFINITIONS ──────────────────────────────────
 function injectTcpClose(S, protocol, scenario){
   if((TRANSPORT_MAP[protocol]||'tcp')!=='tcp') return S;
@@ -2377,6 +2471,7 @@ function injectTcpClose(S, protocol, scenario){
   return S;
 }
 function buildSteps(scenario, host, protocol) {
+  const foundation = (state && state.foundation) || 'none';
   let S;
   if(protocol==='ftp')         S = buildFtpSteps(scenario, host);
   else if(protocol==='smtp')   S = buildSmtpSteps(scenario, host);
@@ -2390,7 +2485,10 @@ function buildSteps(scenario, host, protocol) {
   else if(protocol==='pptp')   S = buildPptpSteps(scenario, host);
   else if(protocol==='dhcp')   S = buildDhcpSteps(scenario, host);
   else if(protocol==='nat')    S = buildNatSteps(scenario, host);
-  if(S) return injectTcpClose(S, protocol, scenario);
+  if(S){
+    S = injectTcpClose(S, protocol, scenario);
+    return composeFoundation(S, foundation, scenario, host, protocol);
+  }
 
   const isHttps = protocol==='https';
   const port = isHttps ? 443 : 80;
@@ -2591,12 +2689,14 @@ function buildSteps(scenario, host, protocol) {
     },
   ];
 
-  if (scenario==='dns-fail') return truncateDnsFail(S);
-  if (scenario==='tcp-timeout') {
+  if (scenario==='dns-fail') S = truncateDnsFail(S);
+  else if (scenario==='tcp-timeout') {
     const i = S.findIndex(s=>s.id==='tcp-syn');
-    return S.slice(0, i+1);
+    S = S.slice(0, i+1);
+  } else {
+    S = injectTcpClose(S, protocol, scenario);
   }
-  return injectTcpClose(S, protocol, scenario);
+  return composeFoundation(S, foundation, scenario, host, protocol);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2605,7 +2705,7 @@ function buildSteps(scenario, host, protocol) {
 const state = {
   steps:[], idx:-1, playing:false, playTimer:null, animRAF:null,
   speed:1, scenario:'normal', host:'example.com', protocol:'https',
-  dnsMode:'compact', pktCount:0, started:false,
+  dnsMode:'compact', foundation:'none', pktCount:0, started:false,
 };
 
 // ─── PLAIN-LANGUAGE ANALOGIES (always applied) ─────────
@@ -3426,6 +3526,10 @@ function updateLeftSidebar() {
   const np = state.netProfile;
   const scNet = document.getElementById('scNetwork');
   if(scNet) scNet.textContent = np ? `${np.label} · ~${np.baseRtt}ms` : '—';
+  const fnd = state.foundation || 'none';
+  const fndLabel = {none:'—',dhcp:'+ DHCP boot',nat:'Behind NAT',both:'DHCP + NAT'}[fnd] || '—';
+  const scFnd = document.getElementById('scFoundation');
+  if(scFnd) scFnd.textContent = fndLabel;
   const scNames = {normal:'Normal Flow',  'dns-fail':'DNS Fail', 'tcp-timeout':'TCP Timeout', 'server-slow':'Slow Server'};
   document.getElementById('scScenario').textContent = scNames[state.scenario] || '—';
   document.getElementById('scProtocol').textContent = (state.protocol||'https').toUpperCase();
@@ -3766,6 +3870,10 @@ function initSim() {
   state.scenario=document.getElementById('scenarioSel').value;
   const dnsModeEl=document.getElementById('dnsModeSel');
   state.dnsMode=dnsModeEl?dnsModeEl.value:'compact';
+  const foundationEl=document.getElementById('foundationSel');
+  state.foundation = foundationEl ? foundationEl.value : 'none';
+  // Foundation only makes sense for app protocols. Standalone DHCP/NAT views ignore it.
+  if(protocol==='dhcp' || protocol==='nat') state.foundation='none';
   if(protocol==='snmp') state.dnsMode='cached';
   state.netProfile = detectNetworkProfile(host);
   state.steps=scaleStepLatencies(applyAnalogies(buildSteps(state.scenario,state.host,state.protocol)), state.netProfile);
