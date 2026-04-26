@@ -447,7 +447,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v20.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v21.0</div>
     </div>
   </a>
 
@@ -2804,20 +2804,23 @@ function detectNetworkProfile(host){
 function scaleStepLatencies(S, profile){
   const baseRtt = (profile && profile.baseRtt) || 20;
   const factor  = baseRtt / 20;
-  const rewriteStr = s => {
+  // Steps that ALWAYS happen on local LAN regardless of target host distance.
+  // DHCP only talks to the LAN gateway; NAT rewrite is at the home router.
+  const localOnly = id => /^(dhcp-|nat-aug-)/.test(id||'');
+  const rewriteStr = (s, useFactor) => {
     if(typeof s !== 'string') return s;
-    // Match "~ 20ms" / "~120ms" / "~ 1ms" — leave "< 1ms" untouched
     return s.replace(/~\s*(\d+(?:\.\d+)?)\s*ms/g, (_,n)=>{
       const v = parseFloat(n);
-      const scaled = Math.max(1, Math.round(v * factor));
+      const scaled = Math.max(1, Math.round(v * useFactor));
       return '~'+scaled+'ms';
     });
   };
   return S.map(step => {
     const out = {...step};
-    if(out.kpiLat) out.kpiLat = rewriteStr(out.kpiLat);
+    const useFactor = localOnly(out.id) ? 1 : factor;
+    if(out.kpiLat) out.kpiLat = rewriteStr(out.kpiLat, useFactor);
     if(Array.isArray(out.details)){
-      out.details = out.details.map(d => ({...d, v: rewriteStr(d.v)}));
+      out.details = out.details.map(d => ({...d, v: rewriteStr(d.v, useFactor)}));
     }
     return out;
   });
