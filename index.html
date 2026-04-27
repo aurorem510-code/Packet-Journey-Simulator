@@ -450,7 +450,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v28.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v29.0</div>
     </div>
   </a>
 
@@ -679,11 +679,11 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 // ═══════════════════════════════════════════════════════
 
 const NODES = [
-  { id:'browser',   name:'Browser',        type:'CLIENT',    icon:'🌐', cx:76,  cy:170, tt:'用戶端瀏覽器，發起所有請求，最終渲染頁面。'},
-  { id:'resolver',  name:'OS Resolver',    type:'DNS-CACHE', icon:'💻', cx:236, cy:170, tt:'作業系統 DNS 解析器，持有本地快取，向上游查詢。'},
-  { id:'recursive', name:'Recursive DNS',  type:'RESOLVER',  icon:'🔄', cx:396, cy:170, tt:'遞回解析器（如 8.8.8.8），代替客戶端完成完整 DNS 查詢鏈。'},
-  { id:'webserver', name:'Web Server',     type:'ORIGIN',    icon:'🖥', cx:556, cy:170, tt:'源站伺服器，接收 HTTP/HTTPS 請求並回傳網頁資源。'},
-  { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:716, cy:170, tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
+  { id:'browser',   name:'Browser',        type:'CLIENT',    icon:'🌐', cx:76,  cy:170, mac:'02:42:ac:11:00:02', tt:'用戶端瀏覽器，發起所有請求，最終渲染頁面。'},
+  { id:'resolver',  name:'OS Resolver',    type:'DNS-CACHE', icon:'💻', cx:236, cy:170, mac:'02:42:ac:11:00:01', tt:'作業系統 DNS 解析器（與 Browser 同主機），持有本地快取。'},
+  { id:'recursive', name:'Recursive DNS',  type:'RESOLVER',  icon:'🔄', cx:396, cy:170, mac:'(remote)', tt:'遞回解析器（如 8.8.8.8），代替客戶端完成完整 DNS 查詢鏈。'},
+  { id:'webserver', name:'Web Server',     type:'ORIGIN',    icon:'🖥', cx:556, cy:170, mac:'(remote)', tt:'源站伺服器，接收 HTTP/HTTPS 請求並回傳網頁資源。'},
+  { id:'render',    name:'Browser Render', type:'RENDERER',  icon:'🎨', cx:716, cy:170, mac:'(local UI)', tt:'瀏覽器渲染引擎，解析 HTML/CSS，執行 Layout & Paint。'},
 ];
 
 const PROTOCOL_LABELS = {
@@ -1613,6 +1613,53 @@ function buildSnmpSteps(scenario, host) {
     },
   ];
   if(scenario==='dns-fail') return truncateDnsFail(S);
+  return S;
+}
+
+// ─── SHARED ARP RESOLVE STEP (L2) ──────────────────────
+// Real TCP handshake CANNOT happen before the OS knows the next-hop's MAC.
+// Cross-subnet → resolve default gateway's MAC; same-subnet → resolve target's
+// MAC. Shares stageIdx with the TCP Handshake stage so it doesn't bloat the
+// stage tabs but still appears in the journey timeline.
+function arpResolveStep(stageIdx, isLocal){
+  const targetLabel = isLocal ? '目標 IP' : '預設閘道（192.168.1.1）';
+  return {
+    id:'arp-resolve', stageIdx,
+    title:'L2: ARP 解析下一跳 MAC', titleEN:'L2: ARP Resolve Next-Hop MAC',
+    protocol:'ARP (RFC 826, EtherType 0x0806)', layer:'Network', packetType:'ARP Request/Reply',
+    badgeClass:'b-arp', badgeText:'ARP',
+    from:'browser', to:'webserver', pkt:'WHO-HAS', pktColor:'#A78BFA',
+    activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+    kpiProto:'ARP', kpiLat:'~ 1ms', kpiStatus:'L2 RESOLVED',
+    what:`要把 IP 封包送到對方，OS 必須先知道**下一跳的 MAC 地址**（L2 才能在 LAN 上把 frame 送出）。`+
+      `對方跨網段 → ARP 解析的是「${targetLabel}」的 MAC；同網段 → 直接 ARP 目標。<br><br>`+
+      `📡 <b>ARP Request</b>（L2 broadcast，dst MAC = ff:ff:ff:ff:ff:ff）：「Who has 192.168.1.1? Tell 192.168.1.42」<br>`+
+      `📨 <b>ARP Reply</b>（unicast 回到 sender MAC）：「192.168.1.1 is at aa:bb:cc:dd:ee:ff」<br><br>`+
+      `若 ARP 表已有此 entry（cache 期間 ~60s）就直接用，不需要這次廣播。`,
+    details:[
+      {k:'Sender',v:'192.168.1.42 / 02:42:ac:11:00:02'},
+      {k:'Target IP',v:isLocal?'(target on same subnet)':'192.168.1.1 (Default GW)'},
+      {k:'L2 dst MAC',v:'ff:ff:ff:ff:ff:ff (broadcast)',c:'c-info'},
+      {k:'EtherType',v:'0x0806 (ARP, 不在 IP 內)'},
+      {k:'Reply',v:'aa:bb:cc:dd:ee:ff',c:'c-success'},
+      {k:'Cached',v:'~60s (Linux ARP cache, `ip neigh`)'},
+      {k:'Note',v:'此步在拓撲上跟 TCP 握手共用「TCP Handshake」stage chip — L2/L3 必須先解析才能送 SYN'},
+    ],
+    tech:'ARP 不在 IP 之上 — 它是 EtherType 0x0806 的獨立 L2 frame，存在於 L2 與 L3 之間（俗稱 L2.5）。每張 IP 封包離開網卡前，OS 都要查 ARP 表確認下一跳 MAC；表內沒有就先廣播 ARP Request 再送出 IP 封包。IPv6 改用 NDP（ICMPv6 type 135-136）取代 ARP，沒有獨立的 EtherType。',
+    fail:null,
+    interview:'**ARP spoofing** 是 LAN 內中間人攻擊的經典手法：攻擊者偽造 ARP Reply 把 GW 的 MAC 換成自己 — 受害者 ARP 表被污染後，所有外送流量都被導引到攻擊者。防禦：交換器 Dynamic ARP Inspection (DAI) + DHCP Snooping binding；Linux 也可 `arp -s` 靜態綁定。生產 LAN 上 `arp -n` / `ip neigh` 是除錯第一站。',
+  };
+}
+
+function injectArpResolve(S, scenario){
+  // ARP only needed for TCP-based normal flows (TCP timeout / DNS fail also
+  // needs ARP, but we keep them simple). Skip if already present.
+  if(S.some(s=>s.id==='arp-resolve')) return S;
+  if(scenario==='dns-fail') return S; // truncated before TCP, no point
+  const synIdx = S.findIndex(s=>s.id==='tcp-syn');
+  if(synIdx<0) return S;
+  const stage = S[synIdx].stageIdx;
+  S.splice(synIdx, 0, arpResolveStep(stage, false));
   return S;
 }
 
@@ -2736,7 +2783,7 @@ function buildSlaacSteps(scenario, host){
       from:null, to:'browser', pkt:'BOOT', pktColor:'#A78BFA',
       activeNodes:['browser'], activeEdges:[],
       kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'NO ADDR',
-      what:'⚠️ 注意：IPv6 取代了 DHCP 的部分角色 — 自動配置走 SLAAC（StateLess Address AutoConfiguration），用 NDP（鄰居發現協定，跑在 ICMPv6 上）取代 ARP。本流程示範 IPv6 主機從零到取得 Global IPv6 + Default GW + DNS 的完整 boot。',
+      what:'⚠️ <b>SLAAC 取代的是 DHCP（位址自動配置），不是 DNS。</b><br>連 example.com 仍要問 DNS 拿 AAAA 記錄（A 是 IPv4，AAAA 是 IPv6）。本流程只示範「IPv6 主機 boot 取得 IP + GW + DNS server 位址」這個一次性過程，等同於 IPv4 的 DHCP DORA — 不代表 IPv6 連線過程不需要 DNS。<br><br>NDP（Neighbor Discovery Protocol，跑在 ICMPv6 上）取代了 ARP（IPv4 的 L2 解析）。本流程示範 IPv6 主機從零到取得 Link-Local + Global IPv6 + Default GW + DNS server 位址 的完整 boot。',
       details:[
         {k:'MAC',v:'02:42:ac:11:00:02'},
         {k:'IPv6 state',v:'No address',c:'c-warning'},
@@ -2852,7 +2899,7 @@ function buildSlaacSteps(scenario, host){
       from:'browser', to:'render', pkt:'UP', pktColor:'#45D483',
       activeNodes:['browser','render'], activeEdges:['e-ws'],
       kpiProto:'OK', kpiLat:'~ 2ms', kpiStatus:'NETWORK UP',
-      what:'IPv6 連線就緒 — Link-Local 內部用、Global IPv6 對外用、有 default gateway、有 DNS。從這刻起所有 socket() 預設可選 IPv4 或 IPv6，現代 OS 用 happy eyeballs (RFC 8305) 並行嘗試兩者，先成功的勝出。',
+      what:'IPv6 連線就緒 — Link-Local 內部用、Global IPv6 對外用、有 default gateway、有 DNS server 位址。後續連到 example.com 之類的 hostname 還是要查 DNS（這次問 AAAA 記錄），跟 IPv4 流程同理 — DNS 始終是必要的，SLAAC 只負責配 IP。從這刻起所有 socket() 預設可選 IPv4 或 IPv6，現代 OS 用 happy eyeballs (RFC 8305) 並行嘗試兩者，先成功的勝出。',
       details:[
         {k:'eth0',v:'fe80::a3b2:.../64 + 2001:db8:abcd::a3b2:.../64',c:'c-success'},
         {k:'default route',v:'::/0 via fe80::1',c:'c-success'},
@@ -3010,6 +3057,7 @@ function buildSteps(scenario, host, protocol) {
   else if(protocol==='traceroute') S = buildTracerouteSteps(scenario, host);
   else if(protocol==='slaac')  S = buildSlaacSteps(scenario, host);
   if(S){
+    S = injectArpResolve(S, scenario);
     S = injectTcpClose(S, protocol, scenario);
     return composeFoundation(S, foundation, scenario, host, protocol);
   }
@@ -3220,12 +3268,15 @@ function buildSteps(scenario, host, protocol) {
 
   if (scenario==='dns-fail') S = truncateDnsFail(S);
   else if (scenario==='tcp-timeout') {
+    S = injectArpResolve(S, scenario);
     const i = S.findIndex(s=>s.id==='tcp-syn');
     S = S.slice(0, i+1);
   } else if (scenario==='packet-loss') {
+    S = injectArpResolve(S, scenario);
     S = injectPacketLossSteps(S);
     S = injectTcpClose(S, protocol, scenario);
   } else {
+    S = injectArpResolve(S, scenario);
     S = injectTcpClose(S, protocol, scenario);
   }
   return composeFoundation(S, foundation, scenario, host, protocol);
@@ -3521,7 +3572,7 @@ function drawTopology() {
   // Nodes
   NODES.forEach(n=>{
     const g = svgEl('g',{'id':'nd-'+n.id,'cursor':'pointer'});
-    const W=108,H=74;
+    const W=108,H=86;
     // Card
     const rect = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:H,rx:12,
       fill:'var(--card)',stroke:'var(--border)','stroke-width':'1.5','id':'nrect-'+n.id});
@@ -3547,8 +3598,14 @@ function drawTopology() {
       'font-size':'8.5','fill':'var(--text2)',
       'font-family':'JetBrains Mono,monospace','letter-spacing':'0.5','id':'ntyp-'+n.id});
     type.textContent=n.type;
+    // MAC (small, dim — L2 information)
+    const mac = svgEl('text',{x:n.cx,y:n.cy+38,
+      'text-anchor':'middle','dominant-baseline':'middle',
+      'font-size':'7','fill':'var(--text2)','opacity':'0.55',
+      'font-family':'JetBrains Mono,monospace','id':'nmac-'+n.id});
+    mac.textContent=n.mac||'';
 
-    [rect,strip,dot,icon,lbl,type].forEach(el=>g.appendChild(el));
+    [rect,strip,dot,icon,lbl,type,mac].forEach(el=>g.appendChild(el));
     nodesG.appendChild(g);
 
     // Hover tooltip
@@ -4467,7 +4524,7 @@ function showDoneOverlay(){
     nat:'NAT 連線完成：私有 IP 經 NAT 轉換為公網 IP，回程依 NAT 表反向轉換回 LAN。',
     ping:'ping 完成：4 個 ICMP Echo Request 全部收到 Reply，平均 RTT ~12ms，loss 0%。',
     traceroute:'traceroute 完成：3 跳路徑揭露（家用 GW → ISP CGNAT → 目標），TTL 機制驗證有效。',
-    slaac:'IPv6 SLAAC + NDP 完成：Link-Local + Global IPv6 配置就緒，dual-stack 啟用。',
+    slaac:'IPv6 SLAAC + NDP 完成：Link-Local + Global IPv6 配置就緒。注意此流程僅取代 DHCP（自動配置），不取代 DNS — 後續連到網域名仍要 AAAA 查詢。',
   };
   document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
