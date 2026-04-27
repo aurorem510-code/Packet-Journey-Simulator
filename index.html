@@ -337,6 +337,9 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .b-tls{background:rgba(132,204,22,.12);color:#84CC16;border:1px solid rgba(132,204,22,.28)}
 .b-dhcp{background:rgba(34,211,238,.12);color:#22D3EE;border:1px solid rgba(34,211,238,.28)}
 .b-nat{background:rgba(251,146,60,.12);color:#FB923C;border:1px solid rgba(251,146,60,.28)}
+.b-icmp{background:rgba(34,211,238,.12);color:#22D3EE;border:1px solid rgba(34,211,238,.28)}
+.b-arp{background:rgba(167,139,250,.12);color:#A78BFA;border:1px solid rgba(167,139,250,.28)}
+.b-ipv6{background:rgba(167,139,250,.14);color:#A78BFA;border:1px solid rgba(167,139,250,.34)}
 
 .rp-body{padding:16px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1}
 
@@ -447,7 +450,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v27.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v28.0</div>
     </div>
   </a>
 
@@ -482,6 +485,11 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
         <optgroup label="── Tooling ──">
           <option value="snmp">📊 SNMP</option>
           <option value="echo">🔁 Echo</option>
+          <option value="ping">🏓 ping (ICMP Echo)</option>
+          <option value="traceroute">🛤 traceroute (TTL hops)</option>
+        </optgroup>
+        <optgroup label="── IPv6 ──">
+          <option value="slaac">🔮 SLAAC + NDP (IPv6 boot)</option>
         </optgroup>
         <optgroup label="── VPN / Tunnel ──">
           <option value="pptp">🛡 PPTP</option>
@@ -516,6 +524,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
         <option value="tcp-timeout">⏱ TCP Timeout</option>
         <option value="server-slow">🐌 Slow Server</option>
         <option value="auth-fail">🔐 Auth Fail</option>
+        <option value="packet-loss">📉 Packet Loss + Retransmit</option>
       </select>
     </div>
     <button class="btn btn-ghost" id="themeBtn" title="Toggle theme">🌙</button>
@@ -692,6 +701,9 @@ const PROTOCOL_LABELS = {
   pptp:     { browser:['VPN Client','Initiator','🛡'],  webserver:['VPN Concentrator','PNS','🏰'],     render:['Tunneled Network','GRE','🌐'] },
   dhcp:     { browser:['Client (no IP)','Booting','💻'],webserver:['DHCP Server','LAN Gateway','📮'],  render:['Network Ready','IF UP','📶'] },
   nat:      { browser:['LAN Client','192.168.1.42','🏠'],webserver:['Public Server','203.0.113.5','🌍'],render:['Response Received','LAN','📥'] },
+  ping:     { browser:['ping host','Source','🏓'],      webserver:['Target','Echo responder','🎯'],   render:['RTT Stats','min/avg/max','📊'] },
+  traceroute:{ browser:['traceroute host','Source','🛤'],webserver:['Hop 3 / Target','Final','🎯'],   render:['Path Summary','Hops + RTT','📋'] },
+  slaac:    { browser:['IPv6 Client','Booting','💻'],   webserver:['IPv6 Router','RA / NDP','🛰'],    render:['IPv6 Ready','Dual-stack','🔮'] },
 };
 
 const DNS_ZONE_LABELS = {
@@ -804,6 +816,9 @@ function getStages(p, foundation) {
   else if(p==='pptp')   stages=['URL Parse','DNS Lookup','IP Resolved','TCP Control','PPTP Setup','GRE Tunnel','Connected'];
   else if(p==='dhcp')   stages=['Boot','DISCOVER','OFFER','REQUEST','ACK','Network Up'];
   else if(p==='nat')    stages=['LAN Origin','DNS','SYN @ NAT','Translate Out','Public Leg','Translate In','Established'];
+  else if(p==='ping')   stages=['Configure','DNS Lookup','IP Resolved','ARP Resolve','Echo Request','Echo Reply','Stats'];
+  else if(p==='traceroute') stages=['Configure','DNS Lookup','IP Resolved','Hop 1','Hop 2','Hop 3','Path Summary'];
+  else if(p==='slaac')  stages=['IF Up','Link-Local Gen','DAD','Router Solicit','Router Adv','Global Gen','IPv6 Up'];
   else                  stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
 
   // Foundation prefix: DHCP boot prepends 6 stages to any app protocol
@@ -818,6 +833,7 @@ const TRANSPORT_MAP = {
   https:'tcp', http:'tcp', ftp:'tcp', smtp:'tcp', imap:'tcp', pop3:'tcp',
   ssh:'tcp', telnet:'tcp', ldap:'tcp', pptp:'tcp', nat:'tcp',
   snmp:'udp', echo:'udp', dhcp:'udp',
+  ping:'icmp', traceroute:'icmp', slaac:'icmp',
 };
 const STAGES = getStages('https');
 
@@ -956,14 +972,18 @@ function tcpStepsBuilder(port, scenario) {
       from:'browser', to:'webserver', pkt:'ACK', pktColor:'#4DA3FF',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
-      what:'三向交握完成，雙方進入 ESTABLISHED 狀態，可以開始傳輸應用層資料。',
+      what:'三向交握完成，雙方進入 ESTABLISHED 狀態，可以開始傳輸應用層資料。新連線進入 Slow Start：cwnd 從 IW=10 segments 起（RFC 6928），每收到一個 ACK 就 +1（每 RTT 翻倍），直到 ssthresh 或封包遺失。',
       details:[
         {k:'Flags',v:'ACK',c:'c-success'},
         {k:'Seq',v:'1001 (Client ISN+1)'},
         {k:'Ack',v:'5001 (Server ISN+1)'},
         {k:'Status',v:'ESTABLISHED',c:'c-success'},{k:'RTT',v:'~20ms'},
+        {k:'Initial cwnd',v:'10 MSS ≈ 14600 bytes (RFC 6928)',c:'c-info'},
+        {k:'Mode',v:'Slow Start (exponential growth)'},
+        {k:'Congestion algo',v:'CUBIC (Linux 預設) / BBR (Google) / Reno'},
+        {k:'Window Scaling',v:'啟用 (RFC 7323, factor 7) → 實際 window 上限可達數 MB'},
       ],
-      tech:'TCP ESTABLISHED 後，若為加密協定（HTTPS/IMAPS/SMTPS/FTPS），還需進行 TLS 握手（1–2 個 RTT）。TLS 1.3 將握手壓縮至 1 RTT。',
+      tech:'TCP ESTABLISHED 後，若為加密協定（HTTPS/IMAPS/SMTPS/FTPS），還需進行 TLS 握手（1–2 個 RTT）。TLS 1.3 將握手壓縮至 1 RTT。Slow Start 不是「慢」— 而是「指數成長」，cwnd 達到 BDP 需要 log2(BDP/IW) 個 RTT。',
       fail:null,
       interview:'TCP 連線由 4-tuple（源 IP、源 Port、目標 IP、目標 Port）唯一確定。HTTP keep-alive 允許複用同一條 TCP 連線，避免重複握手開銷。',
     },
@@ -2481,6 +2501,373 @@ function buildNatSteps(scenario, host){
   return S;
 }
 
+// ─── ICMP PING STEPS BUILDER ───────────────────────────
+function buildPingSteps(scenario, host){
+  const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+  const targetIp = isIp ? host : '93.184.216.34';
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'設定 ping 目標', titleEN:'Configure ping target',
+      protocol:'ICMP Tool', layer:'Application', packetType:'Init',
+      badgeClass:'b-icmp', badgeText:'ICMP',
+      from:null, to:'browser', pkt:'TGT', pktColor:'#22D3EE',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'ICMP', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`ping 是 ICMP Echo 機制（RFC 792）的命令列工具，用來測試 L3 連通性與 RTT。本流程示範 ping ${host}（4 次 Echo Request）。`,
+      details:[
+        {k:'Target',v:host},
+        {k:'Type/Code',v:'Type=8 (Echo Request) / Code=0'},
+        {k:'TTL',v:'64 (Linux default)'},
+        {k:'Payload',v:'56 bytes data + 8 bytes ICMP header = 64 bytes'},
+        {k:'Identifier',v:'PID & 0xFFFF (區分多個 ping 進程)'},
+      ],
+      tech:'ping 走在 IP 之上但無 port 概念（ICMP 不是 TCP/UDP）。Linux raw socket / Windows IcmpSendEcho API。在某些網路 ICMP 被防火牆封掉，但這不代表 host 不通 — 改試 TCP-level 探測（hping3、tcptraceroute）。',
+      fail:null,
+      interview:'ICMP 不是「網路層的 ping」這麼簡單 — 它是 IP 協定的伴生協定（IP protocol number 1），跟 TCP(6)/UDP(17) 同層級。重要 ICMP type：0/8 (Echo)、3 (Destination Unreachable)、5 (Redirect)、11 (Time Exceeded → traceroute)、4 (Source Quench, 已棄用)。',
+    },
+    ...(isIp ? [] : dnsStepsBuilder(host, false, state.dnsMode)),
+    {
+      id:'arp-resolve', stageIdx:3,
+      title:'ARP 解析下一跳 MAC', titleEN:'ARP Resolve Next-Hop MAC',
+      protocol:'ARP (RFC 826)', layer:'Network', packetType:'ARP Request/Reply',
+      badgeClass:'b-arp', badgeText:'ARP',
+      from:'browser', to:'webserver', pkt:'WHO-HAS', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'ARP', kpiLat:'~ 1ms', kpiStatus:'RESOLVED',
+      what:`要把 IP 封包送到 ${targetIp}，OS 要先知道對應的 MAC 地址（L2 才能在 LAN 上送達）。如果目標跨網段，ARP 解析的是「預設閘道」的 MAC；同網段則直接 ARP 目標。<br><br>📡 ARP Request：「Who has ${isIp?host:targetIp}? Tell 192.168.1.42」（L2 廣播 ff:ff:ff:ff:ff:ff）<br>📨 ARP Reply：對方單播回「${isIp?host:targetIp} is at aa:bb:cc:dd:ee:ff」`,
+      details:[
+        {k:'Sender',v:'192.168.1.42 / 02:42:ac:11:00:02'},
+        {k:'Target IP',v: isIp?host:'192.168.1.1 (Default GW)'},
+        {k:'L2 dst',v:'ff:ff:ff:ff:ff:ff (broadcast)',c:'c-info'},
+        {k:'Reply',v:'aa:bb:cc:dd:ee:ff (Target / GW MAC)',c:'c-success'},
+        {k:'Cached for',v:'~60s (Linux ARP cache)'},
+      ],
+      tech:'ARP 是 L2.5 協定 — 不在 IP 內、不在 Ethernet header 內，而是 EtherType 0x0806 的獨立 frame。ARP 表 (`arp -n` / `ip neigh`) 是除錯 LAN 連通性的第一站。IPv6 對應機制是 NDP (Neighbor Discovery Protocol，跑在 ICMPv6 之上)。',
+      fail:null,
+      interview:'**ARP spoofing** 是 LAN 內中間人攻擊的經典手法：攻擊者偽造 ARP Reply 把 GW 的 MAC 換成自己，所有流量被導引到攻擊者再轉發。防禦：交換器 Dynamic ARP Inspection (DAI) + DHCP Snooping binding。',
+    },
+    {
+      id:'icmp-echo-req', stageIdx:4,
+      title:'ICMP Echo Request', titleEN:'ICMP Echo Request',
+      protocol:'ICMP (Type 8)', layer:'Network', packetType:'Echo Request',
+      badgeClass:'b-icmp', badgeText:'ICMP',
+      from:'browser', to:'webserver', pkt:'ECHO REQ', pktColor:'#22D3EE',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'ICMP', kpiLat:'< 1ms', kpiStatus:'SENT',
+      what:`封包離開網卡：L2 dst MAC 是 GW 的 MAC、L3 dst IP 是 ${targetIp}。每跳路由器拆 L2 重封裝（更新 src/dst MAC）但 L3 dst IP 不變，TTL 每跳 -1。`,
+      details:[
+        {k:'IP src',v:'192.168.1.42'},
+        {k:'IP dst',v:targetIp},
+        {k:'IP TTL',v:'64'},
+        {k:'IP Protocol',v:'1 (ICMP)'},
+        {k:'ICMP Type',v:'8 (Echo Request)'},
+        {k:'ICMP Code',v:'0'},
+        {k:'Sequence',v:'1 (icmp_seq)'},
+        {k:'Identifier',v:'0x4F2A (PID-derived)'},
+      ],
+      tech:'TTL（IPv4，IPv6 叫 Hop Limit）防止封包在錯誤路由表下無限轉發。每跳路由器 -1，到 0 時丟棄並回 ICMP Time Exceeded（Type 11）— 這就是 traceroute 的工作原理。',
+      fail:null,
+      interview:'為什麼 Linux 預設 TTL=64 而 Windows=128？歷史包袱。RFC 1700/3232 建議 64，但 Windows 沿用 BSD 早期 128。Cisco IOS=255。可從 TTL 反推 OS（hop count + 推測初始 TTL）— 簡單的 OS fingerprinting。',
+    },
+    {
+      id:'icmp-echo-reply', stageIdx:5,
+      title:'ICMP Echo Reply', titleEN:'ICMP Echo Reply',
+      protocol:'ICMP (Type 0)', layer:'Network', packetType:'Echo Reply',
+      badgeClass:'b-icmp', badgeText:'ICMP',
+      from:'webserver', to:'browser', pkt:'ECHO REP', pktColor:'#45D483',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'ICMP', kpiLat:'~ 12ms', kpiStatus:'RTT 12ms',
+      what:`目標收到 Echo Request 後，依 RFC 792 規定回一個 Echo Reply：把 payload 原封不動帶回。客戶端記錄送出與收到的時間差 = RTT。`,
+      details:[
+        {k:'ICMP Type',v:'0 (Echo Reply)',c:'c-success'},
+        {k:'Sequence',v:'1 (matched to request)'},
+        {k:'Payload',v:'identical to request'},
+        {k:'Measured RTT',v:'~12ms'},
+      ],
+      tech:'若沒收到 Reply 可能是：1) 路徑 ICMP 被擋（許多企業防火牆預設 deny ICMP）；2) host 死了；3) 防火牆 stateful 規則只允許 outbound ICMP；4) Echo Reply 被中間設備吃掉。RTT > 1000ms 通常表示路徑壅塞或路由抖動。',
+      fail:null,
+      interview:'ping 不通不代表 host 不通 — 反之亦然。實務除錯路徑：本機 ip a → ip r → ARP table → ping default GW → ping 8.8.8.8 → ping target → tcping/nc 80 → curl。每階段判定不同層的問題。',
+    },
+    {
+      id:'ping-stats', stageIdx:6,
+      title:'統計結果', titleEN:'ping Statistics',
+      protocol:'ICMP Tool', layer:'Application', packetType:'Stats',
+      badgeClass:'b-icmp', badgeText:'ICMP',
+      from:'browser', to:'render', pkt:'STATS', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'ICMP', kpiLat:'~12ms avg', kpiStatus:'4/4 received',
+      what:'4 個 ICMP Echo Request 全部收到 Reply。CLI 通常會顯示 min/avg/max/mdev 統計，packet loss=0%。',
+      details:[
+        {k:'Sent / Received',v:'4 / 4',c:'c-success'},
+        {k:'Loss',v:'0%',c:'c-success'},
+        {k:'RTT min/avg/max/mdev',v:'10.2 / 12.4 / 14.8 / 1.6 ms'},
+        {k:'Total time',v:'3010ms (4 packets × 1s interval)'},
+      ],
+      tech:'ping 預設 1 秒一發。ping -i 0.2 加快 / ping -f flood（需 root）/ ping -s 1472 測 PMTU。Mac/BSD 的 mdev 叫 stddev。',
+      fail:null,
+      interview:'監控腳本中 ping 的常見誤用：用單個 ping 判斷主機存活率太敏感，至少 5 個 packets、loss > 25% 才告警。或改用 fping 並行 ping 多目標。',
+      isLast:true,
+    },
+  ];
+  return S;
+}
+
+// ─── ICMP TRACEROUTE STEPS BUILDER ─────────────────────
+// Repurposes the 5-node topology as 5 hops:
+// browser=Source, resolver=Hop1(home GW), recursive=Hop2(ISP), webserver=Hop3(target), render=Result
+function buildTracerouteSteps(scenario, host){
+  const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+  const targetIp = isIp ? host : '93.184.216.34';
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'設定 traceroute 目標', titleEN:'Configure traceroute target',
+      protocol:'traceroute (Linux)', layer:'Application', packetType:'Init',
+      badgeClass:'b-icmp', badgeText:'TRACE',
+      from:null, to:'browser', pkt:'TGT', pktColor:'#FB923C',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'TRACE', kpiLat:'< 1ms', kpiStatus:'OK',
+      what:`traceroute 利用 IP TTL 機制揭露封包路徑：故意用 TTL=1 送出，第一跳路由器丟棄並回 ICMP Time Exceeded（Type 11），客戶端因此得知第一跳的 IP；接著 TTL=2、3...，逐跳暴露完整路徑。`,
+      details:[
+        {k:'Target',v:host+' / '+targetIp},
+        {k:'Method',v:'UDP probe (Linux default, dst port 33434+)'},
+        {k:'Probes per hop',v:'3'},
+        {k:'Max hops',v:'30 (-m option)'},
+      ],
+      tech:'traceroute 的 packet 種類因平台不同：Linux 預設用 UDP probe（高 port 觸發 Port Unreachable），Windows tracert 用 ICMP Echo Request，可指定 -T 改用 TCP SYN 繞過 ICMP 防火牆規則。',
+      fail:null,
+      interview:'traceroute 看到 `* * *` 不一定代表斷線 — 很多 ISP 路由器把 ICMP rate-limit 或乾脆 disable。改用 mtr（My TraceRoute）連續測試更能看出哪一跳真的有問題。',
+    },
+    ...(isIp ? [] : dnsStepsBuilder(host, false, state.dnsMode)),
+    {
+      id:'trace-hop1', stageIdx:3,
+      title:'Hop 1 — TTL=1 抵達家用路由器', titleEN:'Hop 1 — TTL=1 → Home Router',
+      protocol:'IP / ICMP', layer:'Network', packetType:'TTL Exceeded',
+      badgeClass:'b-icmp', badgeText:'TRACE',
+      from:'browser', to:'resolver', pkt:'TTL=1', pktColor:'#FB923C',
+      activeNodes:['browser','resolver'], activeEdges:['e-br'],
+      kpiProto:'IP', kpiLat:'~ 1ms', kpiStatus:'Hop 1: 192.168.1.1',
+      what:'客戶端送出 UDP probe 設 TTL=1。第一跳（家用路由器 192.168.1.1）拆 IP 後 TTL 減為 0，依 RFC 791 規定丟棄封包並回 ICMP Time Exceeded（Type 11, Code 0）給來源。客戶端因此學到第一跳的 IP。',
+      details:[
+        {k:'Outgoing TTL',v:'1'},
+        {k:'Hop responder',v:'192.168.1.1 (home gateway)',c:'c-success'},
+        {k:'ICMP Type',v:'11 (Time Exceeded)'},
+        {k:'ICMP Code',v:'0 (TTL expired in transit)'},
+        {k:'RTT',v:'~1ms (LAN)'},
+      ],
+      tech:'第一跳幾乎都是你的 default gateway，可從 `ip r` 確認。家用 router 通常是 192.168.x.1 或 10.0.x.1。企業環境第一跳可能是 L3 switch SVI。',
+      fail:null,
+      interview:'家中網路不順時常見診斷：第一跳（GW）就 RTT 高 → 家用 AP/網卡問題；第二跳（ISP）RTT 高 → ISP 線路問題；後段 RTT 高 → 對端側或國際線路。各段的 RTT 是分層除錯的關鍵。',
+    },
+    {
+      id:'trace-hop2', stageIdx:4,
+      title:'Hop 2 — TTL=2 抵達 ISP 邊緣', titleEN:'Hop 2 — TTL=2 → ISP Edge',
+      protocol:'IP / ICMP', layer:'Network', packetType:'TTL Exceeded',
+      badgeClass:'b-icmp', badgeText:'TRACE',
+      from:'browser', to:'recursive', pkt:'TTL=2', pktColor:'#FB923C',
+      activeNodes:['browser','resolver','recursive'], activeEdges:['e-br','e-rr'],
+      kpiProto:'IP', kpiLat:'~ 8ms', kpiStatus:'Hop 2: 100.64.0.1',
+      what:'第二顆 UDP probe，TTL=2。家用 router 收到時 TTL=2，扣 1 後 =1，正常轉發給 ISP 邊緣路由器。ISP 邊緣收到時 TTL=1，扣 1 後 =0，回 Time Exceeded。',
+      details:[
+        {k:'Outgoing TTL',v:'2'},
+        {k:'Hop 1 sees TTL',v:'2 → 1 (forward)'},
+        {k:'Hop 2 sees TTL',v:'1 → 0 (drop, send Time Exceeded)',c:'c-warning'},
+        {k:'Hop responder',v:'100.64.0.1 (ISP CGNAT edge)',c:'c-success'},
+        {k:'RTT',v:'~8ms'},
+      ],
+      tech:'看到 100.64.0.0/10 這個區段 → 你被 CGNAT 了（Carrier-Grade NAT）。這個段是 RFC 6598 為 ISP 內部使用保留，跟 RFC 1918 私網一樣不會在公網路由。',
+      fail:null,
+      interview:'CGNAT 對使用者有何影響？1) 你拿不到真正的公網 IP（即使路由器顯示「公網 IP」也是 100.64.x.x）；2) P2P 應用（VoIP、線上遊戲）需要 STUN/TURN 中繼；3) 入站連線（自架 server）幾乎不可能，需向 ISP 申請真公網 IP 或用 Cloudflare Tunnel 等替代方案。',
+    },
+    {
+      id:'trace-hop3', stageIdx:5,
+      title:'Hop 3 — TTL=3 抵達目標', titleEN:'Hop 3 — TTL=3 → Target',
+      protocol:'IP / ICMP', layer:'Network', packetType:'Port Unreachable',
+      badgeClass:'b-icmp', badgeText:'TRACE',
+      from:'browser', to:'webserver', pkt:'TTL=3', pktColor:'#45D483',
+      activeNodes:['browser','resolver','recursive','webserver'], activeEdges:['e-br','e-rr','e-bw'],
+      kpiProto:'IP', kpiLat:'~ 12ms', kpiStatus:'Target reached',
+      what:`第三顆 probe TTL=3，最終抵達目標主機 ${targetIp}。目標收到的是高 port (33434+) 的 UDP packet，因為沒有應用 listen，OS 回 ICMP Destination Unreachable / Port Unreachable（Type 3, Code 3）— 客戶端據此判斷已抵達終點，traceroute 結束。`,
+      details:[
+        {k:'Outgoing TTL',v:'3'},
+        {k:'Final responder',v:targetIp,c:'c-success'},
+        {k:'ICMP Type',v:'3 (Destination Unreachable)'},
+        {k:'ICMP Code',v:'3 (Port Unreachable)'},
+        {k:'Stop signal',v:'收到 Type 3 而非 Type 11',c:'c-info'},
+        {k:'RTT',v:'~12ms'},
+      ],
+      tech:'這就是為什麼 Linux traceroute 用 UDP 高 port — 故意觸發 Port Unreachable 作為「抵達」訊號。Windows tracert 用 ICMP Echo Request，抵達時收到 Echo Reply 而非 Time Exceeded。',
+      fail:null,
+      interview:'traceroute -n 跳過反向 DNS 查詢顯著提速。-T 改 TCP SYN（hping3 / nmap --traceroute）可繞過防火牆 ICMP 規則。-I 改 ICMP（Linux 也可走 Windows 風格）。每個 flag 都是實務調試的工具。',
+    },
+    {
+      id:'trace-summary', stageIdx:6,
+      title:'路徑摘要', titleEN:'Path Summary',
+      protocol:'traceroute', layer:'Application', packetType:'Display',
+      badgeClass:'b-icmp', badgeText:'TRACE',
+      from:'browser', to:'render', pkt:'PATH', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'TRACE', kpiLat:'~12ms total', kpiStatus:'3 hops',
+      what:'完整路徑揭露完成，每跳 IP 與 RTT 列出。在真實 Internet 上通常 8-15 跳，跨洋可能 20+ 跳。',
+      details:[
+        {k:'1',v:'192.168.1.1   1.0 ms (Home GW)',c:'c-success'},
+        {k:'2',v:'100.64.0.1   8.2 ms (ISP CGNAT)',c:'c-success'},
+        {k:'3',v:targetIp+'  12.0 ms (Target)',c:'c-success'},
+        {k:'Total hops',v:'3'},
+      ],
+      tech:'每跳的三個 RTT 取自三個 probe — 若某跳第二、第三個 probe 比第一個慢很多，可能是該跳的 ICMP rate-limit。MTR (My TraceRoute) 連續探測能看出每跳的 packet loss%，比單次 traceroute 強。',
+      fail:null,
+      interview:'BGP 視角：traceroute 顯示的路徑跟 BGP route 路徑可能不一樣（asymmetric routing）— 去程跟回程可能走完全不同的路徑！這是 ISP 互聯架構決定的，CDN 與多 ISP 環境特別常見。',
+      isLast:true,
+    },
+  ];
+  return S;
+}
+
+// ─── IPv6 SLAAC + NDP STEPS BUILDER ────────────────────
+function buildSlaacSteps(scenario, host){
+  const S = [
+    {
+      id:'url-parse', stageIdx:0,
+      title:'IPv6 介面啟用 — 尚無位址', titleEN:'IPv6 Interface UP — No address yet',
+      protocol:'IPv6 stack', layer:'Network', packetType:'Init',
+      badgeClass:'b-ipv6', badgeText:'IPv6',
+      from:null, to:'browser', pkt:'BOOT', pktColor:'#A78BFA',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'NO ADDR',
+      what:'⚠️ 注意：IPv6 取代了 DHCP 的部分角色 — 自動配置走 SLAAC（StateLess Address AutoConfiguration），用 NDP（鄰居發現協定，跑在 ICMPv6 上）取代 ARP。本流程示範 IPv6 主機從零到取得 Global IPv6 + Default GW + DNS 的完整 boot。',
+      details:[
+        {k:'MAC',v:'02:42:ac:11:00:02'},
+        {k:'IPv6 state',v:'No address',c:'c-warning'},
+        {k:'NDP',v:'ICMPv6 type 133-137 (RS/RA/NS/NA/Redirect)'},
+      ],
+      tech:'IPv6 拋棄了 ARP（IPv4 唯一不在 IP 內的 L2 解析）— 改用 ICMPv6 統一處理鄰居發現、地址自動配置、router 公告等。整個 IPv6 boot 不需要 DHCP server 存在（雖然 DHCPv6 仍可選用做集中管理）。',
+      fail:null,
+      interview:'IPv6 的設計初衷之一是「讓網路自我組織」— SLAAC 比 DHCP 更去中心化。但企業仍偏好 DHCPv6（記錄哪台機器拿哪個 IP、做 ACL 與計費）— 兩者並非互斥，現代部署常並用（SLAAC for address + DHCPv6 for DNS/options，叫 stateless DHCPv6）。',
+    },
+    {
+      id:'slaac-linklocal', stageIdx:1,
+      title:'產生 Link-Local 位址', titleEN:'Generate Link-Local fe80::',
+      protocol:'IPv6 / EUI-64 or RFC 7217', layer:'Network', packetType:'Address Gen',
+      badgeClass:'b-ipv6', badgeText:'IPv6',
+      from:'browser', to:'browser', pkt:'fe80::', pktColor:'#A78BFA',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'fe80::1',
+      what:'介面啟用就自動產生 Link-Local 位址（fe80::/10 開頭）— 不需任何外部協助。經典做法用 EUI-64：取 MAC 地址插入 fffe + 翻轉 U/L bit。現代 OS 用 RFC 7217 隨機化以保護隱私（避免 MAC 跨網段被追蹤）。',
+      details:[
+        {k:'Prefix',v:'fe80::/10 (Link-Local)'},
+        {k:'EUI-64 example',v:'fe80::042:acff:fe11:0002 (from MAC)'},
+        {k:'RFC 7217',v:'fe80::a3b2:c40f:8e22:1d77 (隨機化)',c:'c-info'},
+        {k:'Scope',v:'同 link 內，不可路由'},
+      ],
+      tech:'每個 IPv6 介面都必須有 Link-Local 位址（即使沒有 Global IP），用於 NDP、OSPFv3、BGP 同 link 鄰居等。雙協議堆疊機器同時有 IPv4 + Link-Local + Global IPv6。',
+      fail:null,
+      interview:'EUI-64 把 MAC 嵌進 IP 暴露隱私（追蹤同一台筆電到處跑），所以 RFC 4941（temporary addresses）+ RFC 7217（stable but opaque）已是現代預設。Windows、macOS、Linux 預設都已啟用。',
+    },
+    {
+      id:'slaac-dad', stageIdx:2,
+      title:'DAD — 重複位址偵測', titleEN:'Duplicate Address Detection (NS)',
+      protocol:'ICMPv6 NDP', layer:'Network', packetType:'Neighbor Solicitation',
+      badgeClass:'b-ipv6', badgeText:'NDP',
+      from:'browser', to:'webserver', pkt:'NS-DAD', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NDP', kpiLat:'~ 1s', kpiStatus:'unique',
+      what:'裝置送出 Neighbor Solicitation（ICMPv6 type 135），dst = solicited-node multicast (ff02::1:ff_xx:xxxx)，問「有人用這個位址嗎？」沒人回應 → 該位址沒衝突可用。等待 ~1 秒。',
+      details:[
+        {k:'src',v:'::（unspecified，DAD 期間還沒位址）'},
+        {k:'dst',v:'ff02::1:ff11:0002 (solicited-node multicast)',c:'c-info'},
+        {k:'Target',v:'fe80::042:acff:fe11:0002 (要驗證的位址)'},
+        {k:'Timer',v:'RetransTimer (預設 1000ms) × DupAddrDetectTransmits (1)'},
+        {k:'No reply',v:'位址確認可用',c:'c-success'},
+      ],
+      tech:'IPv4 也有重複位址偵測（gratuitous ARP），但 IPv6 把這做成強制流程的一部分。DAD 時若收到回應 → 該位址已被佔用，介面拒絕設置該位址，必須換一個。',
+      fail:null,
+      interview:'DAD 在大規模 Wi-Fi 環境（咖啡廳、機場）會慢一點，因為 multicast 廣播範圍大。Apple 設備用 RFC 4429 Optimistic DAD：DAD 還沒完成就先用該位址（樂觀），衝突時才放棄 — 加快連線速度。',
+    },
+    {
+      id:'slaac-rs', stageIdx:3,
+      title:'Router Solicitation', titleEN:'RS — Ask for Router',
+      protocol:'ICMPv6 NDP', layer:'Network', packetType:'Type 133',
+      badgeClass:'b-ipv6', badgeText:'NDP',
+      from:'browser', to:'webserver', pkt:'RS', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NDP', kpiLat:'~ 5ms', kpiStatus:'RS sent',
+      what:'有 Link-Local 位址後，主機送 Router Solicitation（ICMPv6 type 133）到「all routers multicast」 (ff02::2)，請求路由器「立刻回 RA 給我，不要等下一個排程公告」（router 預設每 200 秒主動公告一次）。',
+      details:[
+        {k:'ICMPv6 Type',v:'133 (Router Solicitation)'},
+        {k:'src',v:'fe80::042:acff:fe11:0002'},
+        {k:'dst',v:'ff02::2 (all-routers multicast)',c:'c-info'},
+        {k:'Source Link-Layer',v:'Option: 02:42:ac:11:00:02'},
+      ],
+      tech:'RS 是「主動觸發」機制，省去等待 router 排程公告（最壞 200 秒）。沒 RS 主機也會收到下個排程 RA，只是慢。',
+      fail:null,
+      interview:'IPv6 router 必須週期性發 RA，這是 IPv6 跟 IPv4 的根本差異 — IPv4 router 不會「自我介紹」，主機需手動或 DHCP 學到 GW。IPv6 改成 router 主動廣播，網路自我組織。',
+    },
+    {
+      id:'slaac-ra', stageIdx:4,
+      title:'Router Advertisement', titleEN:'RA — Router Public Announcement',
+      protocol:'ICMPv6 NDP', layer:'Network', packetType:'Type 134',
+      badgeClass:'b-ipv6', badgeText:'NDP',
+      from:'webserver', to:'browser', pkt:'RA', pktColor:'#A78BFA',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'NDP', kpiLat:'~ 8ms', kpiStatus:'RA received',
+      what:'路由器以 multicast (ff02::1, all-nodes) 回 Router Advertisement，內含：Prefix（你可以用 2001:db8::/64）、Default Router lifetime、RDNSS（DNS server 位址，RFC 8106）、MTU、Hop Limit 等所有主機需要的資訊。',
+      details:[
+        {k:'ICMPv6 Type',v:'134 (Router Advertisement)'},
+        {k:'Prefix',v:'2001:db8:abcd::/64 (autonomous flag = 1)',c:'c-success'},
+        {k:'Default Router',v:'fe80::1 (router Link-Local)',c:'c-success'},
+        {k:'RDNSS',v:'2001:4860:4860::8888 (Google DNS over IPv6)',c:'c-success'},
+        {k:'Valid Lifetime',v:'2592000s (30 天)'},
+        {k:'M/O flag',v:'M=0, O=0 (純 SLAAC，不用 DHCPv6)'},
+      ],
+      tech:'M (Managed) flag = 1 表示「也用 DHCPv6 拿位址」；O (Other) flag = 1 表示「位址自己 SLAAC，但 DNS 等選項從 DHCPv6 拿」。M=0,O=0 是純 SLAAC（典型家用）；M=0,O=1 是 stateless DHCPv6（企業常見）；M=1 是完整 DHCPv6。',
+      fail:null,
+      interview:'RA Guard（RFC 6105）：交換器層面阻擋非授權的 RA，防止 rogue RA 攻擊 — 攻擊者偽造 RA 公告自己是 default GW，把流量導引去自己。對應 IPv4 的 DHCP Snooping 機制。',
+    },
+    {
+      id:'slaac-global', stageIdx:5,
+      title:'產生 Global IPv6 + 設定路由', titleEN:'Derive Global IPv6 + Routes',
+      protocol:'IPv6 / SLAAC', layer:'Network', packetType:'Address Gen',
+      badgeClass:'b-ipv6', badgeText:'IPv6',
+      from:'browser', to:'browser', pkt:'2001:db8::', pktColor:'#A78BFA',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'GLOBAL UP',
+      what:'主機把 RA 內的 Prefix (2001:db8:abcd::/64) 跟自己的 interface ID 拼起來，產生 Global IPv6 — 同樣可選 EUI-64 或 RFC 7217 隨機化。寫入 routing table、寫入 /etc/resolv.conf（或 systemd-resolved）。',
+      details:[
+        {k:'Global IPv6',v:'2001:db8:abcd::a3b2:c40f:8e22:1d77',c:'c-success'},
+        {k:'Default route',v:'::/0 via fe80::1 (router LL addr)'},
+        {k:'DNS',v:'2001:4860:4860::8888'},
+        {k:'Privacy addr',v:'另外產生 RFC 4941 temporary，每天輪換',c:'c-info'},
+      ],
+      tech:'同一介面常同時有多個 IPv6：Link-Local (fe80::)、Stable Privacy (RFC 7217)、Temporary (RFC 4941，每天換)、Multicast subscriber 位址。源位址選擇依 RFC 6724 規則：偏好 stable 對外、temporary 對 outbound。',
+      fail:null,
+      interview:'IPv6 端到端原則：理論上每台機器都有公網 IP — 沒有 NAT 困擾。但實務上：1) ISP 給你 /64 或 /56 prefix delegation；2) 你家內部仍可能要 prefix subnetting；3) 防火牆/家用路由器仍 stateful 過濾入站；4) 隱私顧慮讓 temporary address 是必要的。',
+    },
+    {
+      id:'slaac-up', stageIdx:6,
+      title:'IPv6 網路就緒', titleEN:'IPv6 Network Ready',
+      protocol:'OS Network Stack', layer:'Network', packetType:'IF UP',
+      badgeClass:'b-ipv6', badgeText:'IPv6',
+      from:'browser', to:'render', pkt:'UP', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'OK', kpiLat:'~ 2ms', kpiStatus:'NETWORK UP',
+      what:'IPv6 連線就緒 — Link-Local 內部用、Global IPv6 對外用、有 default gateway、有 DNS。從這刻起所有 socket() 預設可選 IPv4 或 IPv6，現代 OS 用 happy eyeballs (RFC 8305) 並行嘗試兩者，先成功的勝出。',
+      details:[
+        {k:'eth0',v:'fe80::a3b2:.../64 + 2001:db8:abcd::a3b2:.../64',c:'c-success'},
+        {k:'default route',v:'::/0 via fe80::1',c:'c-success'},
+        {k:'DNS',v:'2001:4860:4860::8888'},
+        {k:'Status',v:'Dual-stack with IPv4 if available',c:'c-info'},
+      ],
+      tech:'現代 OS 預設是 dual-stack：先 AAAA 查詢，並行 A 查詢（因為某些網域只有 A），happy eyeballs 取最快回應。Apple 在審核 App Store 時要求 IPv6-only 環境 + NAT64 也能跑（強迫開發者支援 IPv6）。',
+      fail:null,
+      interview:'IPv6-only 配 NAT64 (RFC 6146) + DNS64 (RFC 6147) 是現代行動網路趨勢。AT&T、T-Mobile、台灣 NCC 推動的 IPv6-only 行動網路即此架構。Server 端透明 IPv4 連通靠 NAT64 翻譯。',
+      isLast:true,
+    },
+  ];
+  return S;
+}
+
 // ─── FOUNDATION COMPOSER (DHCP prefix + NAT injection) ──
 // DHCP runs ONCE before any app gets an IP. NAT happens transparently around
 // the TCP path. Both can decorate any selected app protocol.
@@ -2619,6 +3006,9 @@ function buildSteps(scenario, host, protocol) {
   else if(protocol==='pptp')   S = buildPptpSteps(scenario, host);
   else if(protocol==='dhcp')   S = buildDhcpSteps(scenario, host);
   else if(protocol==='nat')    S = buildNatSteps(scenario, host);
+  else if(protocol==='ping')   S = buildPingSteps(scenario, host);
+  else if(protocol==='traceroute') S = buildTracerouteSteps(scenario, host);
+  else if(protocol==='slaac')  S = buildSlaacSteps(scenario, host);
   if(S){
     S = injectTcpClose(S, protocol, scenario);
     return composeFoundation(S, foundation, scenario, host, protocol);
@@ -2695,12 +3085,15 @@ function buildSteps(scenario, host, protocol) {
       from:'browser', to:'webserver', pkt:'ACK', pktColor:'#4DA3FF',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
       kpiProto:'TCP', kpiLat:'~ 1ms', kpiStatus:'ESTABLISHED',
-      what:'瀏覽器回傳 ACK 確認 Server 的 SYN。三向交握完成，雙方進入 ESTABLISHED 狀態，可以開始傳輸應用層資料。',
+      what:'瀏覽器回傳 ACK 確認 Server 的 SYN。三向交握完成，雙方進入 ESTABLISHED 狀態。新連線進入 Slow Start：cwnd=IW=10 MSS（RFC 6928），每 RTT 翻倍直到 ssthresh 或封包遺失。',
       details:[
         {k:'Flags',v:'ACK',c:'c-success'},
         {k:'Seq',v:'1001 (Client ISN+1)'},
         {k:'Ack',v:'5001 (Server ISN+1)'},
         {k:'Status',v:'ESTABLISHED',c:'c-success'},{k:'RTT',v:'~20ms'},
+        {k:'Initial cwnd',v:'10 MSS ≈ 14600 bytes (RFC 6928)',c:'c-info'},
+        {k:'Mode',v:'Slow Start (cwnd ×2 per RTT)'},
+        {k:'Congestion algo',v:'CUBIC / BBR / Reno (`sysctl tcp_congestion_control`)'},
       ],
       tech:`TCP ESTABLISHED 後，若為 HTTPS，還需進行 TLS 握手（1–2 個 RTT）。TLS 1.3 將 TLS 握手壓縮至 1 RTT，0-RTT 模式可進一步優化重連場景。`,
       fail:null,
@@ -2829,10 +3222,86 @@ function buildSteps(scenario, host, protocol) {
   else if (scenario==='tcp-timeout') {
     const i = S.findIndex(s=>s.id==='tcp-syn');
     S = S.slice(0, i+1);
+  } else if (scenario==='packet-loss') {
+    S = injectPacketLossSteps(S);
+    S = injectTcpClose(S, protocol, scenario);
   } else {
     S = injectTcpClose(S, protocol, scenario);
   }
   return composeFoundation(S, foundation, scenario, host, protocol);
+}
+
+// ─── PACKET LOSS / FAST RETRANSMIT INJECTION ───────────
+// Inserts after http-resp: a "lost segment" marker, 3 duplicate ACKs from
+// the receiver, and a fast-retransmit step. Educates on TCP reliability.
+function injectPacketLossSteps(S){
+  const i = S.findIndex(s=>s.id==='http-resp');
+  if(i<0) return S;
+  const respStage = S[i].stageIdx;
+  const lossSteps = [
+    {
+      id:'tcp-loss', stageIdx: respStage,
+      title:'⚠️ 封包遺失 — Server 送的 segment N 丟掉了', titleEN:'Segment N Dropped In Transit',
+      protocol:'TCP', layer:'Transport', packetType:'Lost segment',
+      badgeClass:'b-error', badgeText:'LOSS',
+      from:'webserver', to:'browser', pkt:'❌LOST', pktColor:'#FF6B6B',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'—', kpiStatus:'PACKET LOST',
+      what:'真實網路上封包遺失是常態（壅塞、buffer 滿、無線干擾）。Server 送的某個 TCP segment（假設 seq=12000，後面還有 13000、14000、15000）在路由器/中間鏈路被丟棄。Client 的接收緩衝看到 13000、14000、15000 但缺 12000 — 序號不連續。',
+      details:[
+        {k:'Lost segment',v:'seq=12000, len=1448 bytes',c:'c-error'},
+        {k:'Out-of-order arrivals',v:'seq=13448, 14896, 16344'},
+        {k:'Loss reason',v:'router buffer overflow / wireless RF / etc.'},
+        {k:'Loss rate (typical)',v:'WAN 0.01-1% / mobile 1-5% / saturated 10%+'},
+      ],
+      tech:'TCP 是「可靠傳輸」靠的是 sender 重傳 — 接收端只能 ACK 自己已收到的 contiguous bytes。Sender 沒收到對應 ACK 就要重傳。重傳機制有兩種：① RTO timeout（保守，慢）② Fast Retransmit（3 dup ACK 觸發，快）。',
+      fail:null,
+      interview:'TCP 的可靠性不是「封包不會丟」— 而是「丟了 sender 一定會重送、receiver 一定按序遞給 app」。實作關鍵在 sequence number、ACK number、retransmission timer、congestion window。BBR/CUBIC 等擁塞控制演算法決定了「多快發、丟了如何降速」。',
+    },
+    {
+      id:'tcp-dup-ack', stageIdx: respStage,
+      title:'Client 連送 3 個重複 ACK', titleEN:'3 Duplicate ACKs (Fast Retransmit Trigger)',
+      protocol:'TCP', layer:'Transport', packetType:'Duplicate ACK',
+      badgeClass:'b-tcp', badgeText:'DUP-ACK',
+      from:'browser', to:'webserver', pkt:'×3 dupACK', pktColor:'#FB923C',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 5ms', kpiStatus:'3 DUP ACK',
+      what:'Client 每收到一個 out-of-order segment（13000、14000、15000）就回一個 ACK，但 ACK number 永遠是 12000（最後 contiguous 的 byte 邊界）。Server 連續看到 3 個一模一樣的 ACK=12000 → 立刻啟動 Fast Retransmit。',
+      details:[
+        {k:'C→S #1',v:'ACK=12000 (after 13000 arrived)'},
+        {k:'C→S #2',v:'ACK=12000 (after 14000 arrived) — duplicate',c:'c-warning'},
+        {k:'C→S #3',v:'ACK=12000 (after 15000 arrived) — duplicate',c:'c-warning'},
+        {k:'C→S #4',v:'ACK=12000 — 第 3 個 dup，trigger Fast Retransmit',c:'c-error'},
+        {k:'SACK option',v:'(若啟用) 帶 12000-13000 的 hole 資訊',c:'c-info'},
+      ],
+      tech:'為什麼是 3 個 dup ACK 而非 1 個？因為單一 ACK 重複可能是封包亂序（reorder）— 不是真的丟失。RFC 5681 規定累積 3 個 dup ACK 才確認「真的丟了」。SACK (Selective ACK, RFC 2018) 是現代 TCP 預設啟用，能告訴 sender「我有 13000-16344 但缺 12000-13000」，避免不必要的重傳。',
+      fail:null,
+      interview:'Linux `ss -i` 可看 retransmission/lost/dupack 統計。`netstat -s | grep -i retrans` 看系統累計。生產環境 retransmission rate > 0.5% 通常代表線路品質問題，要查網卡 driver、bonding、上游 ISP 線路。',
+    },
+    {
+      id:'tcp-fast-retransmit', stageIdx: respStage,
+      title:'Fast Retransmit + 進入擁塞避免', titleEN:'Fast Retransmit + Congestion Avoidance',
+      protocol:'TCP', layer:'Transport', packetType:'Retransmit',
+      badgeClass:'b-tcp', badgeText:'TCP',
+      from:'webserver', to:'browser', pkt:'RETX', pktColor:'#FFB84D',
+      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
+      kpiProto:'TCP', kpiLat:'~ 25ms', kpiStatus:'RECOVERED',
+      what:'Server 收到 3 個 dup ACK 立即重送 seq=12000（不等 RTO 超時 — 這就是 fast retransmit 的「fast」之處）。同時把 cwnd 砍半（congestion avoidance），下次發送速率變慢以避免再次擁塞。Client 補足缺口後送 ACK=16344 確認所有 byte，連線恢復正常。',
+      details:[
+        {k:'S→C',v:'重送 seq=12000, len=1448',c:'c-success'},
+        {k:'C→S',v:'ACK=16344 (all gaps filled)',c:'c-success'},
+        {k:'cwnd before',v:'64 segments (slow-start 後段)'},
+        {k:'cwnd after',v:'32 segments (砍半)',c:'c-warning'},
+        {k:'ssthresh',v:'set to cwnd/2 = 32'},
+        {k:'Mode',v:'Slow Start → Congestion Avoidance'},
+      ],
+      tech:'TCP 擁塞控制的 4 個機制：① Slow Start — cwnd 從 IW=10 開始，每 RTT 翻倍 ② Congestion Avoidance — 過 ssthresh 後改成每 RTT +1（線性成長）③ Fast Retransmit — 3 dup ACK 觸發重送 ④ Fast Recovery — 重送後 cwnd 砍半進入 CA，不回 slow start。CUBIC（Linux 預設）是 CA 的非線性版本；BBR（Google 開發）改用頻寬探測模型，不依賴丟包訊號。',
+      fail:null,
+      interview:'BBR vs CUBIC 是現代擁塞控制的關鍵之爭。CUBIC 假設「丟包=擁塞」— 在無線網路（封包丟是 RF 不是壅塞）誤判嚴重。BBR 直接探測 bottleneck bandwidth + min RTT — 更適合行動網路與長肥管道（high BDP）。YouTube/Netflix 大量採用 BBR。Linux `sysctl net.ipv4.tcp_congestion_control` 可切換。',
+    },
+  ];
+  S.splice(i+1, 0, ...lossSteps);
+  return S;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2911,6 +3380,23 @@ const BEGINNER_ANALOGIES = {
   'nat-public-leg':  '🌍 比喻：對外世界只看得到公司外牆地址，根本不知道你住幾號。',
   'nat-translate-in':'🔄 比喻：對方寄回信到公用地址，路由器查表「啊這封是給 192.168.1.42 的」，寫上你家門牌轉投。',
   'nat-recv':        '📬 比喻：你在家裡收到回信，整個過程外部完全看不到你的真實內部地址。',
+  'arp-resolve':     '📞 比喻：你知道對方住「中山路 100 號」(IP)，但要寄信還得先問「他的信箱長什麼樣？」(MAC)。ARP 就是大廳廣播：「中山路 100 號的人，你的信箱是哪個？」',
+  'icmp-echo-req':   '🏓 比喻：丟一顆乒乓球過去，喊「在嗎？」',
+  'icmp-echo-reply': '🏓 比喻：對方把球原封不動打回來，你計時 → 知道往返要多久。',
+  'ping-stats':      '📊 比喻：4 顆球都打回來了，平均往返 12ms — 線路通暢。',
+  'trace-hop1':      '🛤 比喻：寄信時故意只貼「能走 1 站」的郵票 — 第 1 站郵局退回「我這站，下不去了」，你就知道第 1 站是誰。',
+  'trace-hop2':      '🛤 比喻：再寄一封貼「能走 2 站」的郵票 — 走到第 2 站才退回，第 2 站身份揭露。',
+  'trace-hop3':      '🎯 比喻：「能走 3 站」剛好抵達目的地 — 對方收到後回的不是退回單，而是「不知這封信」(Port Unreachable)，你就知道路徑全長。',
+  'trace-summary':   '📋 比喻：把全部退回單跟最終回應整理 → 完整路徑地圖。',
+  'slaac-linklocal': '🏷 比喻：IPv6 介面一啟用就先給自己一個「本地暱稱」(fe80::)，跟 router 還沒講話前就能跟同網段鄰居互動。',
+  'slaac-dad':       '🤚 比喻：用新位址前先大聲問：「有人在用這個位址嗎？」沒人回應 → 是空的，可以用。',
+  'slaac-rs':        '📢 比喻：「有 router 在嗎？我剛上線，請現在就告訴我網路設定，不要等下一輪公告。」',
+  'slaac-ra':        '🛰 比喻：router 公告：「我是預設閘道，prefix 給你拿去拼自己的 IP，DNS 是這幾個。」',
+  'slaac-global':    '🔮 比喻：拿到 prefix 後跟自己的 interface ID 拼起來 → 你的全球唯一 IPv6 位址出爐。',
+  'slaac-up':        '✅ 比喻：IPv6 網路就緒，從現在起 socket() 預設可以走 IPv6 或 IPv4，看哪個快用哪個。',
+  'tcp-loss':        '📉 比喻：寄出去的信被郵差弄丟了一封 — 後面幾封都到了，但收件人發現「中間少一封」。',
+  'tcp-dup-ack':     '🔁 比喻：收件人連續送 3 張回條都寫「我只收到到第 5 封」，寄件人就知道第 6 封一定是丟了。',
+  'tcp-fast-retransmit':'⚡ 比喻：寄件人立刻補寄第 6 封，順便把「同時寄出量」砍半 — 避免再被擠爆。',
 };
 
 // ─── NETWORK PROFILE (RTT scaling by host) ─────────────
@@ -3223,6 +3709,9 @@ const PROTOCOL_PORTS = {
   echo:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'ECHO',  proto:'UDP', port:7,   layer:'tx'}],
   dhcp:  [{label:'DHCP-S',proto:'UDP',port:67,  layer:'tx'}, {label:'DHCP-C',proto:'UDP', port:68,  layer:'tx'}],
   nat:   [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'TCP',   proto:'TCP', port:443, layer:'tx'}, {label:'NAT-Tbl',proto:'TCP',port:'L4',layer:'tx'}],
+  ping:  [{label:'ICMP', proto:'ICMP',port:'IP-1', layer:'net'}, {label:'ARP', proto:'ARP', port:'EtherType 0x0806', layer:'net'}],
+  traceroute:[{label:'ICMP',proto:'ICMP',port:'IP-1', layer:'net'}, {label:'UDP probe',proto:'UDP',port:33434,layer:'tx'}],
+  slaac: [{label:'NDP', proto:'ICMPv6',port:'IP-58',layer:'net'}],
 };
 
 const STEP_PORT_HINTS = [
@@ -3976,6 +4465,9 @@ function showDoneOverlay(){
     pptp:'PPTP VPN 隧道建立完成，涵蓋 TCP 控制通道與 GRE 隧道封裝。',
     dhcp:'DHCP DORA 流程完成，主機取得 IP、預設閘道、DNS 與 lease，網路設定就緒。',
     nat:'NAT 連線完成：私有 IP 經 NAT 轉換為公網 IP，回程依 NAT 表反向轉換回 LAN。',
+    ping:'ping 完成：4 個 ICMP Echo Request 全部收到 Reply，平均 RTT ~12ms，loss 0%。',
+    traceroute:'traceroute 完成：3 跳路徑揭露（家用 GW → ISP CGNAT → 目標），TTL 機制驗證有效。',
+    slaac:'IPv6 SLAAC + NDP 完成：Link-Local + Global IPv6 配置就緒，dual-stack 啟用。',
   };
   document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
@@ -4024,6 +4516,9 @@ function initSim() {
     else if(/^pptp:\/\//i.test(raw))     protocol = 'pptp';
     else if(/^dhcp:\/\//i.test(raw))     protocol = 'dhcp';
     else if(/^nat:\/\//i.test(raw))      protocol = 'nat';
+    else if(/^ping:\/\//i.test(raw))     protocol = 'ping';
+    else if(/^trace(route)?:\/\//i.test(raw)) protocol = 'traceroute';
+    else if(/^slaac:\/\//i.test(raw))    protocol = 'slaac';
     else if(/^http:\/\//i.test(raw))     protocol = 'http';
     else                                 protocol = 'https';
   }
@@ -4204,6 +4699,7 @@ document.getElementById('protocolSel').addEventListener('change', function() {
     ldap:'ldap://ldap.example.com', echo:'echo://192.168.1.50',
     pptp:'pptp://vpn.example.com',
     dhcp:'dhcp://lan.local', nat:'nat://example.com',
+    ping:'8.8.8.8', traceroute:'1.1.1.1', slaac:'slaac://lan.local',
   };
   document.getElementById('urlInput').placeholder = phMap[this.value] || 'https://example.com';
 });
