@@ -221,6 +221,8 @@ select.sel:focus{border-color:var(--accent)}
 .ps-chip.layer-tx .ps-v{color:var(--info)}
 .ps-chip.layer-net{background:rgba(167,139,250,.10);border-color:rgba(167,139,250,.4)}
 .ps-chip.layer-net .ps-v{color:#A78BFA}
+.ps-chip.layer-l2{background:rgba(244,114,182,.10);border-color:rgba(244,114,182,.4)}
+.ps-chip.layer-l2 .ps-v{color:#F472B6}
 .ps-arrow{color:var(--text2);font-weight:700;letter-spacing:.5px}
 .ps-ref{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .ps-ref-lbl{font-size:9.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px}
@@ -450,7 +452,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v30.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v31.0</div>
     </div>
   </a>
 
@@ -1626,7 +1628,7 @@ function arpResolveStep(stageIdx, isLocal){
   return {
     id:'arp-resolve', stageIdx,
     title:'L2: ARP 解析下一跳 MAC', titleEN:'L2: ARP Resolve Next-Hop MAC',
-    protocol:'ARP (RFC 826, EtherType 0x0806)', layer:'Link', packetType:'ARP Request/Reply',
+    protocol:'ARP (RFC 826, EtherType 0x0806)', layer:['Link','Network'], packetType:'ARP Request/Reply',
     badgeClass:'b-arp', badgeText:'ARP',
     from:'browser', to:'webserver', pkt:'WHO-HAS', pktColor:'#A78BFA',
     activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2306,7 +2308,7 @@ function buildDhcpSteps(scenario, host){
     {
       id:'dhcp-discover', stageIdx:1,
       title:'DHCPDISCOVER — 廣播找伺服器', titleEN:'DHCPDISCOVER (Broadcast)',
-      protocol:'DHCP / UDP (port 67/68)', layer:'Application', packetType:'DISCOVER',
+      protocol:'DHCP / UDP (port 67/68)', layer:['Application','Network','Link'], packetType:'DISCOVER',
       badgeClass:'b-dhcp', badgeText:'DHCP',
       from:'browser', to:'webserver', pkt:'DISCOVER', pktColor:'#22D3EE',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2327,7 +2329,7 @@ function buildDhcpSteps(scenario, host){
     {
       id:'dhcp-offer', stageIdx:2,
       title:'DHCPOFFER — 伺服器提案', titleEN:'DHCPOFFER (Server proposes)',
-      protocol:'DHCP / UDP', layer:'Application', packetType:'OFFER',
+      protocol:'DHCP / UDP', layer:['Application','Network','Link'], packetType:'OFFER',
       badgeClass:'b-dhcp', badgeText:'DHCP',
       from:'webserver', to:'browser', pkt:'OFFER', pktColor:'#22D3EE',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2349,7 +2351,7 @@ function buildDhcpSteps(scenario, host){
     {
       id:'dhcp-request', stageIdx:3,
       title:'DHCPREQUEST — 正式索取', titleEN:'DHCPREQUEST (Client commits)',
-      protocol:'DHCP / UDP', layer:'Application', packetType:'REQUEST',
+      protocol:'DHCP / UDP', layer:['Application','Network','Link'], packetType:'REQUEST',
       badgeClass:'b-dhcp', badgeText:'DHCP',
       from:'browser', to:'webserver', pkt:'REQUEST', pktColor:'#22D3EE',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2369,7 +2371,7 @@ function buildDhcpSteps(scenario, host){
     {
       id:'dhcp-ack', stageIdx:4,
       title:'DHCPACK — 蓋章確認', titleEN:'DHCPACK (Server commits)',
-      protocol:'DHCP / UDP', layer:'Application', packetType:'ACK',
+      protocol:'DHCP / UDP', layer:['Application','Network','Link'], packetType:'ACK',
       badgeClass:'b-dhcp', badgeText:'DHCP',
       from:'webserver', to:'browser', pkt:'ACK', pktColor:'#45D483',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2452,7 +2454,7 @@ function buildNatSteps(scenario, host){
     {
       id:'nat-syn', stageIdx:2,
       title:'TCP SYN 從 LAN 出發', titleEN:'TCP SYN Leaves LAN',
-      protocol:'TCP (port 443)', layer:'Transport', packetType:'SYN',
+      protocol:'TCP (port 443)', layer:['Transport','Network'], packetType:'SYN',
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'browser', to:'webserver', pkt:'SYN', pktColor:'#4DA3FF',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2471,7 +2473,7 @@ function buildNatSteps(scenario, host){
     {
       id:'nat-translate-out', stageIdx:3,
       title:'NAT 出口翻譯（建表）', titleEN:'NAT Outbound Translation',
-      protocol:'NAT / NAPT', layer:'Network', packetType:'SNAT',
+      protocol:'NAT / NAPT', layer:['Network','Transport'], packetType:'SNAT',
       badgeClass:'b-nat', badgeText:'NAT',
       from:'browser', to:'webserver', pkt:'SNAT', pktColor:'#FB923C',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2491,7 +2493,7 @@ function buildNatSteps(scenario, host){
     {
       id:'nat-public-leg', stageIdx:4,
       title:'公網段 — 抵達伺服器', titleEN:'Public Leg — Server Sees NAT IP',
-      protocol:'TCP (port 443)', layer:'Transport', packetType:'SYN',
+      protocol:'TCP (port 443)', layer:['Transport','Network'], packetType:'SYN',
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'browser', to:'webserver', pkt:'SYN', pktColor:'#4DA3FF',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2509,7 +2511,7 @@ function buildNatSteps(scenario, host){
     {
       id:'nat-translate-in', stageIdx:5,
       title:'回程：NAT 入口反向翻譯', titleEN:'Inbound NAT (Reverse Lookup)',
-      protocol:'NAT / NAPT', layer:'Network', packetType:'DNAT',
+      protocol:'NAT / NAPT', layer:['Network','Transport'], packetType:'DNAT',
       badgeClass:'b-nat', badgeText:'NAT',
       from:'webserver', to:'browser', pkt:'DNAT', pktColor:'#FB923C',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2528,7 +2530,7 @@ function buildNatSteps(scenario, host){
     {
       id:'nat-recv', stageIdx:6,
       title:'LAN 客戶端收到回應', titleEN:'LAN Client Receives Reply',
-      protocol:'TCP', layer:'Transport', packetType:'SYN-ACK',
+      protocol:'TCP', layer:['Transport','Network'], packetType:'SYN-ACK',
       badgeClass:'b-tcp', badgeText:'TCP',
       from:'webserver', to:'browser', pkt:'OK', pktColor:'#45D483',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2577,7 +2579,7 @@ function buildPingSteps(scenario, host){
     {
       id:'arp-resolve', stageIdx:3,
       title:'ARP 解析下一跳 MAC', titleEN:'ARP Resolve Next-Hop MAC',
-      protocol:'ARP (RFC 826)', layer:'Link', packetType:'ARP Request/Reply',
+      protocol:'ARP (RFC 826)', layer:['Link','Network'], packetType:'ARP Request/Reply',
       badgeClass:'b-arp', badgeText:'ARP',
       from:'browser', to:'webserver', pkt:'WHO-HAS', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2815,7 +2817,7 @@ function buildSlaacSteps(scenario, host){
     {
       id:'slaac-dad', stageIdx:2,
       title:'DAD — 重複位址偵測', titleEN:'Duplicate Address Detection (NS)',
-      protocol:'ICMPv6 NDP', layer:'Link', packetType:'Neighbor Solicitation',
+      protocol:'ICMPv6 NDP', layer:['Link','Network'], packetType:'Neighbor Solicitation',
       badgeClass:'b-ipv6', badgeText:'NDP',
       from:'browser', to:'webserver', pkt:'NS-DAD', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2981,7 +2983,7 @@ function makeNatAugStep(direction, stageIdx){
     return {
       id:'nat-aug-out', stageIdx,
       title:'NAT 出口翻譯（SNAT）', titleEN:'NAT Outbound Translation',
-      protocol:'NAT / NAPT', layer:'Network', packetType:'SNAT',
+      protocol:'NAT / NAPT', layer:['Network','Transport'], packetType:'SNAT',
       badgeClass:'b-nat', badgeText:'NAT',
       from:'browser', to:'webserver', pkt:'SNAT', pktColor:'#FB923C',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -3001,7 +3003,7 @@ function makeNatAugStep(direction, stageIdx){
     return {
       id:'nat-aug-in', stageIdx,
       title:'NAT 入口反向翻譯（DNAT）', titleEN:'NAT Inbound Translation',
-      protocol:'NAT / NAPT', layer:'Network', packetType:'DNAT',
+      protocol:'NAT / NAPT', layer:['Network','Transport'], packetType:'DNAT',
       badgeClass:'b-nat', badgeText:'NAT',
       from:'webserver', to:'browser', pkt:'DNAT', pktColor:'#FB923C',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -3787,14 +3789,21 @@ function drawLayerTrack(){
   svg.appendChild(g);
 }
 
+// Normalize step.layer (string or array) into a Set of band IDs.
+function _layerBandIds(activeLayer){
+  if(!activeLayer) return new Set();
+  const layers = Array.isArray(activeLayer) ? activeLayer : [activeLayer];
+  return new Set(layers.map(l => LAYER_BAND_MAP[l]).filter(Boolean));
+}
+
 function updateLayerTrack(activeLayer){
-  const bandId = activeLayer ? (LAYER_BAND_MAP[activeLayer] || null) : null;
+  const bandIds = _layerBandIds(activeLayer);
   LAYER_BANDS.forEach(b => {
     const cell = document.getElementById('layer-cell-'+b.id);
     const lbl  = document.getElementById('layer-lbl-'+b.id);
     const sub  = document.getElementById('layer-sub-'+b.id);
     if(!cell) return;
-    const active = b.id === bandId;
+    const active = bandIds.has(b.id);
     if(active){
       cell.setAttribute('fill', _hexAlpha(b.color, 0.18));
       cell.setAttribute('stroke', b.color);
@@ -3855,7 +3864,9 @@ const STEP_PORT_HINTS = [
 ];
 
 function deriveTransportPort(step, protocol){
-  const out = {transport:'—', port:'—', layer: step?.layer || '—', dir:'—'};
+  // step.layer can be string or array — render as "L2 + L3" style for chip
+  const layerStr = (l => Array.isArray(l) ? l.join(' + ') : (l||'—'))(step?.layer);
+  const out = {transport:'—', port:'—', layer: layerStr, dir:'—'};
   if(!step) return out;
   // Direction
   if(step.from && step.to){
@@ -3938,11 +3949,16 @@ function updatePortStrip(){
     if(info.transport==='TCP') tChip.classList.add('tcp');
     else if(info.transport==='UDP') tChip.classList.add('udp');
   }
-  // Chip class for layer (matches OSI rail colors)
+  // Chip class for layer (matches OSI rail colors). With array layers, use the
+  // first valid band for the chip color highlight; the chip text shows all.
   if(lChip){
-    lChip.classList.remove('layer-app','layer-pres','layer-tx','layer-net');
-    const band = LAYER_BAND_MAP[info.layer];
-    if(band) lChip.classList.add('layer-'+band);
+    lChip.classList.remove('layer-app','layer-pres','layer-tx','layer-net','layer-l2');
+    const rawLayer = step?.layer;
+    const layers = Array.isArray(rawLayer) ? rawLayer : (rawLayer ? [rawLayer] : []);
+    for(const l of layers){
+      const band = LAYER_BAND_MAP[l];
+      if(band){ lChip.classList.add('layer-'+band); break; }
+    }
   }
   // Reference pills (all ports the protocol uses) — highlight active one
   const ref = document.getElementById('psRef');
@@ -4400,10 +4416,11 @@ function updateRightPanel() {
   rpNum.textContent=`Step ${state.idx+1} / ${state.steps.length} — ${step.titleEN}`;
   rpTitle.textContent=step.title;
 
-  // Badges
+  // Badges — step.layer can be array
+  const layerBadgeText = Array.isArray(step.layer) ? step.layer.join(' + ') : step.layer;
   const badgeHtml=[
     `<span class="badge ${step.badgeClass}">${step.badgeText}</span>`,
-    `<span class="badge b-internal">${step.layer}</span>`,
+    `<span class="badge b-internal">${layerBadgeText}</span>`,
     step.isError ? `<span class="badge b-error">ERROR</span>` : '',
     step.isLast ? `<span class="badge b-render">✓ COMPLETE</span>` : '',
   ].join('');
@@ -4428,7 +4445,7 @@ function updateRightPanel() {
       <div class="proto-block">
         <div class="proto-row">
           <span class="proto-key">Layer</span>
-          <span class="proto-val c-accent">${step.layer}</span>
+          <span class="proto-val c-accent">${layerBadgeText}</span>
         </div>
         <div class="proto-row">
           <span class="proto-key">Protocol</span>
