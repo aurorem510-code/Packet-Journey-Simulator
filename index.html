@@ -450,7 +450,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v29.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v30.0</div>
     </div>
   </a>
 
@@ -818,7 +818,7 @@ function getStages(p, foundation) {
   else if(p==='nat')    stages=['LAN Origin','DNS','SYN @ NAT','Translate Out','Public Leg','Translate In','Established'];
   else if(p==='ping')   stages=['Configure','DNS Lookup','IP Resolved','ARP Resolve','Echo Request','Echo Reply','Stats'];
   else if(p==='traceroute') stages=['Configure','DNS Lookup','IP Resolved','Hop 1','Hop 2','Hop 3','Path Summary'];
-  else if(p==='slaac')  stages=['IF Up','Link-Local Gen','DAD','Router Solicit','Router Adv','Global Gen','IPv6 Up'];
+  else if(p==='slaac')  stages=['IF Up','Link-Local Gen','DAD','Router Solicit','Router Adv','Global Gen','IPv6 Up','DNS AAAA + Ready'];
   else                  stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
 
   // Foundation prefix: DHCP boot prepends 6 stages to any app protocol
@@ -1626,7 +1626,7 @@ function arpResolveStep(stageIdx, isLocal){
   return {
     id:'arp-resolve', stageIdx,
     title:'L2: ARP 解析下一跳 MAC', titleEN:'L2: ARP Resolve Next-Hop MAC',
-    protocol:'ARP (RFC 826, EtherType 0x0806)', layer:'Network', packetType:'ARP Request/Reply',
+    protocol:'ARP (RFC 826, EtherType 0x0806)', layer:'Link', packetType:'ARP Request/Reply',
     badgeClass:'b-arp', badgeText:'ARP',
     from:'browser', to:'webserver', pkt:'WHO-HAS', pktColor:'#A78BFA',
     activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2577,7 +2577,7 @@ function buildPingSteps(scenario, host){
     {
       id:'arp-resolve', stageIdx:3,
       title:'ARP 解析下一跳 MAC', titleEN:'ARP Resolve Next-Hop MAC',
-      protocol:'ARP (RFC 826)', layer:'Network', packetType:'ARP Request/Reply',
+      protocol:'ARP (RFC 826)', layer:'Link', packetType:'ARP Request/Reply',
       badgeClass:'b-arp', badgeText:'ARP',
       from:'browser', to:'webserver', pkt:'WHO-HAS', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2815,7 +2815,7 @@ function buildSlaacSteps(scenario, host){
     {
       id:'slaac-dad', stageIdx:2,
       title:'DAD — 重複位址偵測', titleEN:'Duplicate Address Detection (NS)',
-      protocol:'ICMPv6 NDP', layer:'Network', packetType:'Neighbor Solicitation',
+      protocol:'ICMPv6 NDP', layer:'Link', packetType:'Neighbor Solicitation',
       badgeClass:'b-ipv6', badgeText:'NDP',
       from:'browser', to:'webserver', pkt:'NS-DAD', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -2893,22 +2893,80 @@ function buildSlaacSteps(scenario, host){
     },
     {
       id:'slaac-up', stageIdx:6,
-      title:'IPv6 網路就緒', titleEN:'IPv6 Network Ready',
+      title:'IPv6 配置就緒 — 啟用 dual-stack', titleEN:'IPv6 Stack Ready',
       protocol:'OS Network Stack', layer:'Network', packetType:'IF UP',
       badgeClass:'b-ipv6', badgeText:'IPv6',
-      from:'browser', to:'render', pkt:'UP', pktColor:'#45D483',
-      activeNodes:['browser','render'], activeEdges:['e-ws'],
-      kpiProto:'OK', kpiLat:'~ 2ms', kpiStatus:'NETWORK UP',
-      what:'IPv6 連線就緒 — Link-Local 內部用、Global IPv6 對外用、有 default gateway、有 DNS server 位址。後續連到 example.com 之類的 hostname 還是要查 DNS（這次問 AAAA 記錄），跟 IPv4 流程同理 — DNS 始終是必要的，SLAAC 只負責配 IP。從這刻起所有 socket() 預設可選 IPv4 或 IPv6，現代 OS 用 happy eyeballs (RFC 8305) 並行嘗試兩者，先成功的勝出。',
+      from:'browser', to:'browser', pkt:'UP', pktColor:'#45D483',
+      activeNodes:['browser'], activeEdges:[],
+      kpiProto:'IPv6', kpiLat:'~ 2ms', kpiStatus:'STACK UP',
+      what:'IPv6 配置就緒：Link-Local 同網段用、Global IPv6 對外用、default route via fe80::1、DNS server 位址 2001:4860:4860::8888 已寫入。<br><br>但這只代表「網路層配置好了」 — 要連到 example.com 還是得做 DNS 查詢。下一步示範 IPv6 環境下的 DNS AAAA 查詢。',
       details:[
         {k:'eth0',v:'fe80::a3b2:.../64 + 2001:db8:abcd::a3b2:.../64',c:'c-success'},
         {k:'default route',v:'::/0 via fe80::1',c:'c-success'},
-        {k:'DNS',v:'2001:4860:4860::8888'},
+        {k:'DNS server',v:'2001:4860:4860::8888 (待會就要用到它)',c:'c-info'},
         {k:'Status',v:'Dual-stack with IPv4 if available',c:'c-info'},
       ],
-      tech:'現代 OS 預設是 dual-stack：先 AAAA 查詢，並行 A 查詢（因為某些網域只有 A），happy eyeballs 取最快回應。Apple 在審核 App Store 時要求 IPv6-only 環境 + NAT64 也能跑（強迫開發者支援 IPv6）。',
+      tech:'IPv6 socket API 同 IPv4：socket(AF_INET6, SOCK_STREAM, 0) → getaddrinfo() 解析 → connect()。使用者程式碼幾乎一樣，差別在於 getaddrinfo 同時拿 AAAA + A 記錄，由 OS 決定先用哪個。',
       fail:null,
       interview:'IPv6-only 配 NAT64 (RFC 6146) + DNS64 (RFC 6147) 是現代行動網路趨勢。AT&T、T-Mobile、台灣 NCC 推動的 IPv6-only 行動網路即此架構。Server 端透明 IPv4 連通靠 NAT64 翻譯。',
+    },
+    {
+      id:'slaac-dns-query', stageIdx:7,
+      title:'DNS AAAA 查詢 — 解析 IPv6 主機名稱', titleEN:'DNS AAAA Query (over IPv6)',
+      protocol:'DNS / UDP 53 (over IPv6)', layer:'Application', packetType:'AAAA Query',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'browser', to:'recursive', pkt:'AAAA?', pktColor:'#3DD9C5',
+      activeNodes:['browser','resolver','recursive'], activeEdges:['e-br','e-rr'],
+      kpiProto:'DNS/UDP6', kpiLat:'~ 12ms', kpiStatus:'AAAA QUERY',
+      what:'要連到 example.com 必須先做 DNS 查詢 — IPv6 環境問的是 <b>AAAA 記錄</b>（A 是 IPv4 / AAAA 是 IPv6）。封包本身的 src/dst IP 都是 IPv6（client 用 Global IPv6 → DNS server 2001:4860:4860::8888，UDP 53）。注意：DNS protocol 本身一樣，只是 IP 層走 IPv6。',
+      details:[
+        {k:'Query',v:'example.com IN AAAA'},
+        {k:'L3 src',v:'2001:db8:abcd::a3b2:c40f:8e22:1d77 (我的 Global IPv6)'},
+        {k:'L3 dst',v:'2001:4860:4860::8888 (Google Public DNS)',c:'c-info'},
+        {k:'L4',v:'UDP src=ephemeral, dst=53'},
+        {k:'OS',v:'多數 OS 並行送 A + AAAA (Happy Eyeballs)'},
+      ],
+      tech:'DNS 與 IP 版本是兩個獨立概念。你可以用 IPv4 查 AAAA、也可以用 IPv6 查 A — DNS 是一個應用協定，IP 層走哪版只影響傳輸路徑。實務上現代解析器（systemd-resolved、unbound）會雙協定並行查詢。',
+      fail:null,
+      interview:'AAAA 是「四 A」— 因為 IPv6 是 128-bit / IPv4 是 32-bit，128/32=4，所以是 4 個 A。RFC 3596。記憶法：IPv4=A、IPv6=AAAA。混淆度高，面試常考。',
+    },
+    {
+      id:'slaac-dns-response', stageIdx:7,
+      title:'AAAA 回應 — 拿到 IPv6 位址', titleEN:'AAAA Response (IPv6 Address)',
+      protocol:'DNS Response (over IPv6)', layer:'Application', packetType:'AAAA Response',
+      badgeClass:'b-dns', badgeText:'DNS',
+      from:'recursive', to:'browser', pkt:'2606:2800::', pktColor:'#45D483',
+      activeNodes:['browser','resolver','recursive'], activeEdges:['e-br','e-rr'],
+      kpiProto:'DNS/UDP6', kpiLat:'~ 24ms', kpiStatus:'RESOLVED',
+      what:'解析器回傳 example.com 的 IPv6 位址：<b>2606:2800:220:1:248:1893:25c8:1946</b>。客戶端寫入 OS resolver cache（與 IPv4 cache 共用），現在可以發起 IPv6 TCP 連線了。',
+      details:[
+        {k:'AAAA',v:'2606:2800:220:1:248:1893:25c8:1946',c:'c-success'},
+        {k:'TTL',v:'21600s (6h)'},
+        {k:'Authoritative',v:'a.iana-servers.net'},
+        {k:'Now: socket()',v:'AF_INET6 + connect(2606:2800:...:443)',c:'c-info'},
+      ],
+      tech:'getaddrinfo() 在 dual-stack 環境同時拿 A + AAAA，依 RFC 6724 / 8305（Happy Eyeballs v2）規則優先嘗試 IPv6，250ms 內若沒建立連線則 fallback 到 IPv4。',
+      fail:null,
+      interview:'為什麼有些網站只有 A 沒有 AAAA？— 因為 server 端不支援 IPv6（CDN、雲服務多半已支援，但中小型網站常見只有 IPv4）。檢查方式：`dig AAAA example.com` 或 `host -t AAAA example.com`。',
+    },
+    {
+      id:'slaac-done', stageIdx:7,
+      title:'IPv6 + DNS 全鏈通暢', titleEN:'IPv6 + DNS End-to-End Ready',
+      protocol:'IPv6 stack', layer:'Application', packetType:'Ready',
+      badgeClass:'b-ipv6', badgeText:'IPv6',
+      from:'browser', to:'render', pkt:'✓', pktColor:'#45D483',
+      activeNodes:['browser','render'], activeEdges:['e-ws'],
+      kpiProto:'IPv6', kpiLat:'~ 26ms 累積', kpiStatus:'READY',
+      what:'從零到端到端 IPv6 連線就緒：① 介面 UP ② Link-Local + DAD ③ RS/RA ④ Global IPv6 derive ⑤ DNS AAAA 查詢 ⑥ 拿到 IPv6 位址。從這刻起所有後續 TCP/TLS/HTTP 流程跟 IPv4 完全一樣，只是 IP 層走 IPv6。',
+      details:[
+        {k:'My IPv6',v:'2001:db8:abcd::a3b2:c40f:8e22:1d77'},
+        {k:'Target IPv6',v:'2606:2800:220:1:248:1893:25c8:1946',c:'c-success'},
+        {k:'GW',v:'fe80::1'},
+        {k:'Next',v:'NDP NS for next-hop MAC → TCP SYN over IPv6 → ...',c:'c-info'},
+      ],
+      tech:'IPv6 之上的 TCP/TLS/HTTP 與 IPv4 完全相同 — header format、port、handshake 機制都不變。差別只在 L3：IPv6 header（40 bytes 固定）取代 IPv4 header（20+ bytes 可變）；TCP/UDP 重新計算 checksum 時把 IPv6 的 pseudo-header 算進去。',
+      fail:null,
+      interview:'你可以在同一條 socket 用 IPv6 連到 IPv4-only 主機嗎？可以！IPv4-mapped IPv6 address (::ffff:0:0/96) — 例如 ::ffff:93.184.216.34 表示 IPv4 的 93.184.216.34。Linux 的 IPv6 socket 預設啟用 IPv4 兼容模式 (IPV6_V6ONLY=0)。',
       isLast:true,
     },
   ];
@@ -3444,7 +3502,10 @@ const BEGINNER_ANALOGIES = {
   'slaac-rs':        '📢 比喻：「有 router 在嗎？我剛上線，請現在就告訴我網路設定，不要等下一輪公告。」',
   'slaac-ra':        '🛰 比喻：router 公告：「我是預設閘道，prefix 給你拿去拼自己的 IP，DNS 是這幾個。」',
   'slaac-global':    '🔮 比喻：拿到 prefix 後跟自己的 interface ID 拼起來 → 你的全球唯一 IPv6 位址出爐。',
-  'slaac-up':        '✅ 比喻：IPv6 網路就緒，從現在起 socket() 預設可以走 IPv6 或 IPv4，看哪個快用哪個。',
+  'slaac-up':        '✅ 比喻：IPv6 網路設定完成（IP/GW/DNS server 都拿到了），但要連到 example.com 還是得問 DNS。',
+  'slaac-dns-query': '☎️ 比喻：拿著 IPv6 電話打給「DNS 查號台」（也是 IPv6 號碼）：「example.com 的 IPv6 是？」',
+  'slaac-dns-response':'📩 比喻：查號台回傳一個 IPv6 門牌號碼，總算可以開始連線了 — 證明 IPv6 也得用 DNS。',
+  'slaac-done':      '🔮 比喻：完整 IPv6 鏈路通暢 — IP 配好、DNS 查到、可以 TCP 了。',
   'tcp-loss':        '📉 比喻：寄出去的信被郵差弄丟了一封 — 後面幾封都到了，但收件人發現「中間少一封」。',
   'tcp-dup-ack':     '🔁 比喻：收件人連續送 3 張回條都寫「我只收到到第 5 封」，寄件人就知道第 6 封一定是丟了。',
   'tcp-fast-retransmit':'⚡ 比喻：寄件人立刻補寄第 6 封，順便把「同時寄出量」砍半 — 避免再被擠爆。',
@@ -3664,12 +3725,15 @@ const LAYER_BAND_MAP = {
   'Presentation': 'pres',
   'Transport':    'tx',
   'Network':      'net',
+  'Link':         'l2',   // ARP / NDP / Ethernet
+  'Data Link':    'l2',
 };
 const LAYER_BANDS = [
-  { id:'app',  label:'L7', sub:'APP',     y:30,  h:72, color:'#FFB84D' },
-  { id:'pres', label:'L6', sub:'TLS',     y:106, h:72, color:'#84CC16' },
-  { id:'tx',   label:'L4', sub:'TCP/UDP', y:182, h:72, color:'#4DA3FF' },
-  { id:'net',  label:'L3', sub:'IP',      y:258, h:72, color:'#A78BFA' },
+  { id:'app',  label:'L7', sub:'APP',     y:30,  h:58, color:'#FFB84D' },
+  { id:'pres', label:'L6', sub:'TLS',     y:92,  h:58, color:'#84CC16' },
+  { id:'tx',   label:'L4', sub:'TCP/UDP', y:154, h:58, color:'#4DA3FF' },
+  { id:'net',  label:'L3', sub:'IP',      y:216, h:58, color:'#A78BFA' },
+  { id:'l2',   label:'L2', sub:'ETH/MAC', y:278, h:58, color:'#F472B6' },
 ];
 
 function _hexAlpha(hex, a){
@@ -4524,7 +4588,7 @@ function showDoneOverlay(){
     nat:'NAT 連線完成：私有 IP 經 NAT 轉換為公網 IP，回程依 NAT 表反向轉換回 LAN。',
     ping:'ping 完成：4 個 ICMP Echo Request 全部收到 Reply，平均 RTT ~12ms，loss 0%。',
     traceroute:'traceroute 完成：3 跳路徑揭露（家用 GW → ISP CGNAT → 目標），TTL 機制驗證有效。',
-    slaac:'IPv6 SLAAC + NDP 完成：Link-Local + Global IPv6 配置就緒。注意此流程僅取代 DHCP（自動配置），不取代 DNS — 後續連到網域名仍要 AAAA 查詢。',
+    slaac:'IPv6 從 boot 到 DNS 完整流程：SLAAC + NDP 配置 → DNS AAAA 查詢拿到 IPv6 位址。SLAAC 取代 DHCP（自動配置），但 DNS 仍是必要 — 流程明確示範這一點。',
   };
   document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
