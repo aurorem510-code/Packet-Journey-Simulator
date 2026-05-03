@@ -217,6 +217,8 @@ select.sel:focus{border-color:var(--accent)}
 .ps-chip.layer-app .ps-v{color:#FFB84D}
 .ps-chip.layer-pres{background:rgba(132,204,22,.10);border-color:rgba(132,204,22,.4)}
 .ps-chip.layer-pres .ps-v{color:#84CC16}
+.ps-chip.layer-session{background:rgba(34,211,238,.10);border-color:rgba(34,211,238,.4)}
+.ps-chip.layer-session .ps-v{color:#22D3EE}
 .ps-chip.layer-tx{background:rgba(77,163,255,.10);border-color:rgba(77,163,255,.4)}
 .ps-chip.layer-tx .ps-v{color:var(--info)}
 .ps-chip.layer-net{background:rgba(167,139,250,.10);border-color:rgba(167,139,250,.4)}
@@ -534,7 +536,7 @@ abbr.jargon:hover{color:var(--accent)}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v32.0</div>
+      <div class="logo-sub">封包旅行模擬器 · v33.0</div>
     </div>
   </a>
 
@@ -2320,8 +2322,8 @@ function buildPptpSteps(scenario, host){
     ...tcpStepsBuilder(1723, scenario),
     {
       id:'pptp-control', stageIdx:4,
-      title:'PPTP 控制連線', titleEN:'PPTP Control Connection',
-      protocol:'PPTP (TCP 1723)', layer:'Application', packetType:'Start-Control-Connection',
+      title:'PPTP 控制連線（Session 建立）', titleEN:'PPTP Control Connection (Session Setup)',
+      protocol:'PPTP (TCP 1723)', layer:['Session','Application'], packetType:'Start-Control-Connection',
       badgeClass:'b-pptp', badgeText:'PPTP',
       from:'browser', to:'webserver', pkt:'SCCRQ', pktColor:'#A78BFA',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -3963,18 +3965,39 @@ const LAYER_BAND_MAP = {
   'Application':  'app',
   'Browser':      'app',  // URL parse / render = browser-internal app layer
   'Presentation': 'pres',
+  'Session':      'session',  // PPTP control / SIP dialog / SMB session
   'Transport':    'tx',
   'Network':      'net',
   'Link':         'l2',   // ARP / NDP / Ethernet
   'Data Link':    'l2',
 };
-const LAYER_BANDS = [
-  { id:'app',  label:'L7', sub:'APP',     y:30,  h:58, color:'#FFB84D' },
-  { id:'pres', label:'L6', sub:'TLS',     y:92,  h:58, color:'#84CC16' },
-  { id:'tx',   label:'L4', sub:'TCP/UDP', y:154, h:58, color:'#4DA3FF' },
-  { id:'net',  label:'L3', sub:'IP',      y:216, h:58, color:'#A78BFA' },
-  { id:'l2',   label:'L2', sub:'ETH/MAC', y:278, h:58, color:'#F472B6' },
+// Full band catalog. `optional:true` bands only appear for protocols listed
+// in the corresponding *_PROTOCOLS Set below — keeps the OSI rail uncluttered
+// for protocols that don't have meaningful behavior at that layer.
+const ALL_LAYER_BANDS = [
+  { id:'app',     label:'L7', sub:'APP',     color:'#FFB84D' },
+  { id:'pres',    label:'L6', sub:'TLS',     color:'#84CC16' },
+  { id:'session', label:'L5', sub:'SESSION', color:'#22D3EE', optional:'session' },
+  { id:'tx',      label:'L4', sub:'TCP/UDP', color:'#4DA3FF' },
+  { id:'net',     label:'L3', sub:'IP',      color:'#A78BFA' },
+  { id:'l2',      label:'L2', sub:'ETH/MAC', color:'#F472B6' },
 ];
+// Protocols that genuinely have a Session-layer mechanism (control session,
+// dialog, channel multiplexing). Others stay at the standard 5-band view.
+const SESSION_PROTOCOLS = new Set(['pptp']);  // future: 'sip', 'l2tp', 'smb'
+function _shouldShowOptional(opt, protocol){
+  if(opt==='session') return SESSION_PROTOCOLS.has(protocol);
+  return false;
+}
+function computeBandLayout(protocol){
+  const filtered = ALL_LAYER_BANDS.filter(b => !b.optional || _shouldShowOptional(b.optional, protocol));
+  const n = filtered.length;
+  const top = 30, bottomMargin = 22, gap = 4;
+  const total = 340 - top - bottomMargin;
+  const h = Math.floor((total - (n-1)*gap) / n);
+  return filtered.map((b,i) => ({...b, y: top + i*(h+gap), h}));
+}
+let LAYER_BANDS = computeBandLayout('https');
 
 function _hexAlpha(hex, a){
   const m = hex.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
@@ -3982,10 +4005,13 @@ function _hexAlpha(hex, a){
   return `rgba(${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)},${a})`;
 }
 
-function drawLayerTrack(){
+function drawLayerTrack(protocol){
   const svg = document.getElementById('osiSvg');
-  if(!svg || document.getElementById('layerTrack')) return;
-  // Clean any prior content (in case of re-mount)
+  if(!svg) return;
+  // Recompute band layout for the current protocol — Session band only
+  // appears when protocol is in SESSION_PROTOCOLS.
+  if(protocol) LAYER_BANDS = computeBandLayout(protocol);
+  // Always clear and re-render so band count changes are reflected
   while(svg.firstChild) svg.removeChild(svg.firstChild);
   const g = svgEl('g', {id:'layerTrack'});
   // Top heading
@@ -4962,6 +4988,7 @@ function initSim() {
   state.idx=-1; state.pktCount=0; state.started=true;
 
   updateNodeLabels(state.protocol);
+  drawLayerTrack(state.protocol);  // rebuild rail (adds/removes L5 Session band)
   updateTcpInset();
   updateLayerTrack(null);
   updatePortStrip();
@@ -5107,6 +5134,9 @@ document.getElementById('protocolSel').addEventListener('change', function() {
     ping:'8.8.8.8', traceroute:'1.1.1.1', slaac:'slaac://lan.local',
   };
   document.getElementById('urlInput').placeholder = phMap[this.value] || 'https://example.com';
+  // Rebuild OSI rail so the L5 Session band appears for PPTP and disappears for others
+  drawLayerTrack(this.value);
+  updateLayerTrack(state.steps[state.idx]?.layer || null);
 });
 
 // ─── Learning Path modal ────────────────────────────
