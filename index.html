@@ -83,7 +83,18 @@ header{
 }
 .url-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-a)}
 .url-wrap.shake{animation:shake .3s ease-in-out;border-color:var(--error)}
-.url-prompt{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent);flex-shrink:0}
+.url-prompt{
+  font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;
+  color:var(--accent);flex-shrink:0;letter-spacing:.5px;text-transform:uppercase;
+  background:var(--accent-a);padding:3px 7px;border-radius:6px;cursor:help;
+}
+.url-wrap.hidden{display:none}
+.url-noinput{
+  display:none;flex:1;align-items:center;gap:6px;
+  background:var(--card);border:1px dashed var(--border);border-radius:12px;
+  padding:9px 14px;color:var(--text2);font-size:12px;cursor:help;
+}
+.url-noinput.on{display:inline-flex}
 #urlInput{
   flex:1;background:none;border:none;outline:none;
   color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;padding:9px 0;
@@ -536,15 +547,16 @@ abbr.jargon:hover{color:var(--accent)}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v33.1</div>
+      <div class="logo-sub">封包旅行模擬器 · v34.0</div>
     </div>
   </a>
 
   <div class="url-form">
     <div class="url-wrap" id="urlWrap">
-      <span class="url-prompt">›_</span>
+      <span class="url-prompt" id="urlPrompt" title="輸入欄會隨 Protocol 變身：HTTPS 收 URL、SSH 收 host、DHCP/SLAAC 不需要">URL</span>
       <input id="urlInput" type="text" placeholder="https://example.com" value="https://example.com" spellcheck="false" autocomplete="off">
     </div>
+    <span class="url-noinput" id="urlNoInput" title="此協議不需要輸入目標">📶 此協議由本機環境決定，不需輸入目標</span>
     <button class="btn btn-primary" id="startBtn">Start</button>
   </div>
 
@@ -947,6 +959,274 @@ const STAGES = getStages('https');
 const TOOLTIP_DATA = {};
 NODES.forEach(n=>TOOLTIP_DATA[n.id]=n.tt);
 
+// ─── SHARED FIRST STEP BUILDER ─────────────────────────
+// Returns a stage-0 step appropriate to the protocol. Most non-web protocols
+// don't actually parse a URL — mail clients load saved account config, SSH
+// reads ~/.ssh/config, SNMP reads inventory, ping parses CLI args. This map
+// makes the first step content match the real-world action and the fact that
+// step is purely local (no wire packet → marked concept).
+function firstStepFor(protocol, host){
+  const base = {
+    stageIdx:0, from:null, to:'browser',
+    activeNodes:['browser'], activeEdges:[],
+    kpiLat:'< 1ms', kpiStatus:'OK', fail:null,
+  };
+  if(protocol==='https' || protocol==='http'){
+    const scheme=protocol;
+    return {...base,
+      id:'url-parse',
+      title:`解析 ${scheme.toUpperCase()} URL`, titleEN:`${scheme.toUpperCase()} URL Parsing`,
+      protocol:'Browser', layer:'Browser', packetType:'URL Parse',
+      badgeClass:'b-internal', badgeText:'BROWSER',
+      pkt:'URL', pktColor:'#FFB84D',
+      kpiProto:scheme.toUpperCase(),
+      what:`瀏覽器解析使用者輸入的 URL：scheme=${scheme}、host=${host}、path=/。判斷預設 port (${scheme==='https'?443:80})、是否需要 TLS。整個過程在本機字串解析，無網路封包。`,
+      details:[
+        {k:'URL',v:`${scheme}://${host}/`},
+        {k:'Scheme',v:scheme},
+        {k:'Default Port',v:String(scheme==='https'?443:80)},
+        {k:'TLS Required',v:scheme==='https'?'Yes':'No', c:scheme==='https'?'c-success':''},
+      ],
+      tech:'瀏覽器 URL parsing 走 WHATWG URL Standard，會處理 percent-encoding、IDN punycode、預設 port 推斷等。Path 之後會交給 HTTP 請求行使用。',
+      interview:'URL 結構五件事：scheme、host、port、path、query。瀏覽器在這一步還沒發任何封包 — 全部都是本機字串解析。'
+    };
+  }
+  if(protocol==='ftp'){
+    return {...base,
+      id:'ftp-config',
+      title:'讀取 FTP 客戶端目標設定', titleEN:'FTP Client Config Loading',
+      protocol:'FTP Client (Local)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-ftp', badgeText:'FTP', pkt:'CFG', pktColor:'#FFB84D',
+      kpiProto:'FTP',
+      what:`FTP 客戶端 (FileZilla, lftp, ncftp …) 從使用者輸入或 site config 讀取連線目標：host=${host}、control port=21、authentication mode (anonymous / USER+PASS)、預設傳輸模式 (binary)。本機讀取，無網路封包。`,
+      details:[
+        {k:'Host',v:host},
+        {k:'Control Port',v:'21'},
+        {k:'Data Port',v:'20 (Active) / Dynamic (Passive)'},
+        {k:'Auth',v:'USER/PASS / Anonymous'},
+        {k:'Mode',v:'Passive (PASV) — NAT 友善的現代預設'},
+      ],
+      tech:'FTP（RFC 959）雙通道：控制通道 21 持續保持連線；資料通道按需建立。實務上幾乎都用 PASV 模式因為 active 模式需要 server 主動連回 client，會被 NAT/firewall 擋住。',
+      interview:'FTP 是明文協定。USER/PASS 在線上完全暴露。現代用 SFTP (走 SSH 22) 或 FTPS (FTP over TLS)。SFTP 只需單一 port，防火牆規則簡單，是 DevOps 主流。'
+    };
+  }
+  if(protocol==='smtp'){
+    return {...base,
+      id:'mail-config',
+      title:'載入郵件帳號設定 (SMTP)', titleEN:'Load Mail Account Settings (SMTP)',
+      protocol:'MUA (Mail User Agent)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-smtp', badgeText:'SMTP', pkt:'CFG', pktColor:'#22D3EE',
+      kpiProto:'SMTP',
+      what:`Outlook / Thunderbird / Mail.app 等 MUA 從預先設定的帳號讀取 SMTP 伺服器：host=${host}、submission port=587、認證 (SASL PLAIN / LOGIN over STARTTLS)、寄件人、收件人、本文。**本機 config 讀取，無網路封包**。`,
+      details:[
+        {k:'SMTP Host',v:host},
+        {k:'Submission Port',v:'587 (RFC 4409 — MUA→MSA)'},
+        {k:'TLS',v:'STARTTLS upgrade (RFC 3207)'},
+        {k:'Auth',v:'SASL PLAIN / LOGIN'},
+        {k:'Note',v:'25 是 MTA-to-MTA relay；465 是 implicit TLS (SMTPS)'},
+      ],
+      tech:'MUA 不會「打 URL」進 SMTP — 帳號 host/port/auth 是事先設定好的（IT 推 Exchange autodiscover 或使用者手填）。一旦設定好，每次寄信只是讀本機 config 然後連線。',
+      interview:'587 vs 25 vs 465 三 port：587 是 MUA→MSA 提交（須認證、TLS）；25 是 MTA 之間 relay（多數 ISP 已封 25 防 spam）；465 是 implicit TLS submission（曾廢棄又復活，RFC 8314）。'
+    };
+  }
+  if(protocol==='imap'){
+    return {...base,
+      id:'mail-config',
+      title:'載入郵件帳號設定 (IMAP)', titleEN:'Load Mail Account Settings (IMAP)',
+      protocol:'MUA (Mail User Agent)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-imap', badgeText:'IMAP', pkt:'CFG', pktColor:'#3DD9C5',
+      kpiProto:'IMAP',
+      what:`MUA 讀取 IMAP 帳號設定：server=${host}、port=993 (IMAPS implicit TLS)、credentials、欲同步的資料夾 (INBOX/Sent/Drafts)。準備建立加密連線抓取郵件。**本機操作，無網路封包**。`,
+      details:[
+        {k:'IMAP Host',v:host},
+        {k:'Port',v:'993 (IMAPS implicit TLS)'},
+        {k:'Plain Port',v:'143 (with STARTTLS)'},
+        {k:'Auth',v:'AUTH=PLAIN / OAUTH2'},
+        {k:'Folders',v:'INBOX, Sent, Drafts, ...'},
+      ],
+      tech:'IMAP vs POP3：IMAP 在 server 保留郵件、支援多裝置同步、folder 結構；POP3 預設下載到 local 後刪除 server 副本。',
+      interview:'IMAP IDLE (RFC 2177) 是 push 機制：client 進 IDLE 後 server 有新信會主動推。Gmail/Exchange 等用此達成「即時收信」。'
+    };
+  }
+  if(protocol==='pop3'){
+    return {...base,
+      id:'mail-config',
+      title:'載入郵件帳號設定 (POP3)', titleEN:'Load Mail Account Settings (POP3)',
+      protocol:'MUA (Mail User Agent)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-pop3', badgeText:'POP3', pkt:'CFG', pktColor:'#FB7185',
+      kpiProto:'POP3',
+      what:`MUA 讀取 POP3 帳號設定：server=${host}、port=995 (POP3S implicit TLS)、credentials、是否在抓取後保留 server 副本 (UIDL / leave on server)。**本機操作，無網路封包**。`,
+      details:[
+        {k:'POP3 Host',v:host},
+        {k:'Port',v:'995 (POP3S implicit TLS)'},
+        {k:'Plain Port',v:'110 (with STARTTLS)'},
+        {k:'Mode',v:'Download + Delete (傳統) / UIDL leave on server'},
+      ],
+      tech:'POP3 設計比 IMAP 簡單：USER/PASS → STAT → RETR → DELE → QUIT，整個過程是 stateful sequence。',
+      interview:'POP3 在雲端郵件時代式微 — 單裝置下載再刪除的模型不適合多裝置同步。但 IoT / 自動化抓信腳本仍在用。'
+    };
+  }
+  if(protocol==='snmp'){
+    return {...base,
+      id:'snmp-inventory',
+      title:'從 NMS Inventory 載入 Agent', titleEN:'Load Agent Info from NMS Inventory',
+      protocol:'SNMP Manager (NMS)', layer:'Application', packetType:'Inventory Load',
+      badgeClass:'b-snmp', badgeText:'SNMP', pkt:'INV', pktColor:'#818CF8',
+      kpiProto:'SNMP',
+      what:`NMS (Zabbix / Nagios / SolarWinds / Prometheus snmp_exporter) 從 inventory 資料庫讀出要查詢的 Agent：IP=${host}、UDP port=161、SNMP version (v1/v2c/v3)、community string (v1/v2c) 或 USM credentials (v3)、要查的 OID 清單。**內網設定資料，無網路封包**。`,
+      details:[
+        {k:'Agent IP',v:host},
+        {k:'Port',v:'UDP 161 (查詢) / 162 (Trap)'},
+        {k:'Version',v:'v2c (常見) / v3 (有 auth+priv)'},
+        {k:'Community',v:'public / private / 自訂'},
+        {k:'OID',v:'1.3.6.1.2.1.1.3.0 (sysUpTime)'},
+      ],
+      tech:'生產環境 SNMP polling 是大規模並行操作 — 一個 NMS 可同時 poll 上千台設備、每台多個 OID。Polling interval 常見 1–5 分鐘。',
+      interview:'SNMP v1/v2c 用 community string (明文) — 不安全，僅適用內網。v3 加入 USM 認證 (HMAC) + priv 加密 (DES/AES)，是公開網路必須選擇。'
+    };
+  }
+  if(protocol==='ssh'){
+    return {...base,
+      id:'ssh-config',
+      title:'解析 hostname + 讀取 SSH 設定', titleEN:'Resolve Hostname & Load SSH Config',
+      protocol:'SSH Client (Local)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-ssh', badgeText:'SSH', pkt:'CFG', pktColor:'#A78BFA',
+      kpiProto:'SSH',
+      what:`ssh client 解析命令 \`ssh user@${host}\` → 讀取 ~/.ssh/config 對應的 host alias (preferred port、IdentityFile、ProxyJump、ForwardAgent)，檢查 ~/.ssh/known_hosts 是否已記錄此 host 的 fingerprint。**全是本機檔案讀取，無網路封包**。`,
+      details:[
+        {k:'Target',v:'user@'+host},
+        {k:'Port',v:'22 (預設，可被 ~/.ssh/config 覆蓋)'},
+        {k:'Identity',v:'~/.ssh/id_ed25519 (private key)'},
+        {k:'known_hosts',v:'已記錄 → 一般連線；未記錄 → 顯示 fingerprint 確認'},
+        {k:'Config',v:'~/.ssh/config 可定義 alias、ProxyJump、ForwardAgent'},
+      ],
+      tech:'~/.ssh/config 是 SSH 最強大也最被忽略的功能：可設 Host alias、自動 ProxyJump 跳板、ForwardAgent、ControlMaster 連線復用。',
+      interview:'first-time SSH connect 會問「The authenticity of host can\'t be established」 — 此時 known_hosts 沒記錄，使用者必須手動驗證 fingerprint (帶外管道) 才接受，這是 TOFU (Trust On First Use) 模型。'
+    };
+  }
+  if(protocol==='telnet'){
+    return {...base,
+      id:'telnet-config',
+      title:'解析 telnet 命令參數', titleEN:'Parse Telnet Command Arguments',
+      protocol:'Telnet Client (Local)', layer:'Application', packetType:'Arg Parse',
+      badgeClass:'b-telnet', badgeText:'TELNET', pkt:'ARG', pktColor:'#FAB005',
+      kpiProto:'Telnet',
+      what:`telnet client 從命令 \`telnet ${host}\` 讀取 host + port (預設 23)。**沒有 known_hosts、沒有金鑰驗證、沒有加密** — 這就是為什麼 Telnet 不該在公網使用。準備建立明文 TCP 連線。`,
+      details:[
+        {k:'Target',v:host},
+        {k:'Port',v:'23 (預設)'},
+        {k:'Encryption',v:'❌ None — 全部明文',c:'c-error'},
+        {k:'Authentication',v:'❌ 由遠端 server 處理（無 client cert）'},
+      ],
+      tech:'Telnet (RFC 854) 是 1969 年的協議，原本就沒有加密設計。NVT (Network Virtual Terminal) 抽象在 SSH 之前是遠端管理的標準。',
+      interview:'Telnet 仍有用：連線到網路設備的 console (out-of-band 管理)、Mainframe IBM 3270、舊版工業設備。但任何**有公網路徑**的 Telnet 都應視為高風險，應改 SSH。'
+    };
+  }
+  if(protocol==='ldap'){
+    return {...base,
+      id:'ldap-config',
+      title:'應用程式內 LDAP 設定', titleEN:'Application LDAP Config Load',
+      protocol:'LDAP Client (App)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-ldap', badgeText:'LDAP', pkt:'CFG', pktColor:'#84CC16',
+      kpiProto:'LDAP',
+      what:`應用程式 (Web app / 內部系統) 從 config file / 環境變數 / Vault 讀取 LDAP 連線資訊：URL=ldap://${host}:389 或 ldaps://${host}:636、Bind DN (服務帳號)、Bind Password、Search Base、TLS 設定。**本機 config 讀取，無網路封包**。`,
+      details:[
+        {k:'LDAP URL',v:'ldap://'+host+':389'},
+        {k:'LDAPS',v:'ldaps://'+host+':636 (implicit TLS)'},
+        {k:'Bind DN',v:'cn=svc-account,ou=services,dc=corp,dc=com'},
+        {k:'Search Base',v:'dc=corp,dc=com'},
+      ],
+      tech:'LDAP URL (RFC 4516) 包含 host、port、scope、filter — 但實務上應用直接使用 binding API 而非 URL 字串。',
+      interview:'LDAP vs Active Directory：AD 是微軟以 LDAP 為基礎 + Kerberos 認證 + DNS 為定位機制的綜合體。slapd (OpenLDAP) 是開源版 LDAP server。'
+    };
+  }
+  if(protocol==='echo'){
+    return {...base,
+      id:'echo-target',
+      title:'Echo 測試目標解析', titleEN:'Echo Test Target Resolution',
+      protocol:'Echo Tool (Local)', layer:'Application', packetType:'Arg Parse',
+      badgeClass:'b-echo', badgeText:'ECHO', pkt:'ARG', pktColor:'#FACC15',
+      kpiProto:'Echo',
+      what:`Echo 工具 (RFC 862) 從命令列讀取目標：${host}:7。Echo 同時定義 TCP/UDP — 本流程示範 UDP，準備送出測試 payload。**本機參數解析**。`,
+      details:[
+        {k:'Target',v:host+':7'},
+        {k:'Transport',v:'UDP (RFC 862)'},
+        {k:'Use case',v:'網路連通性測試 / 延遲量測'},
+      ],
+      tech:'RFC 862 Echo Protocol 是 1983 年的設計，現代被 ping (ICMP) / iperf 等工具取代。少數網路設備仍開 port 7 用作探測。',
+      interview:'Echo (port 7) / Discard (9) / Daytime (13) / Chargen (19) 是 RFC 862-867 系列的「網路便利工具」 — 現代多半關閉，因為 Chargen + UDP 可被當成 amplification DDoS 反射器。'
+    };
+  }
+  if(protocol==='pptp'){
+    return {...base,
+      id:'vpn-config',
+      title:'讀取 VPN Client 設定', titleEN:'Load VPN Client Config',
+      protocol:'PPTP Client (Local)', layer:'Application', packetType:'Config Load',
+      badgeClass:'b-pptp', badgeText:'PPTP', pkt:'CFG', pktColor:'#A78BFA',
+      kpiProto:'PPTP',
+      what:`PPTP VPN client 從 VPN profile 讀取連線資訊：server=${host}、user credentials、加密 (MPPE 128-bit)、認證方式 (MS-CHAPv2)。準備建立 TCP 1723 控制通道 + GRE 資料通道。**本機 profile 讀取**。`,
+      details:[
+        {k:'VPN Server',v:host},
+        {k:'Control',v:'TCP 1723'},
+        {k:'Data',v:'IP protocol 47 (GRE)'},
+        {k:'Auth',v:'MS-CHAPv2'},
+        {k:'Encryption',v:'MPPE 128-bit RC4 (已不安全)',c:'c-warning'},
+      ],
+      tech:'PPTP（RFC 2637）是 PPP 的隧道延伸：把 PPP frame 包進 GRE，再走 IP 層。設計簡單但密碼學早已過時 (MS-CHAPv2 + MPPE 已被攻破)。',
+      interview:'PPTP 不再是建議的 VPN 協議。現代選擇：WireGuard (簡潔現代)、IKEv2/IPsec (行動裝置友善)、OpenVPN (成熟跨平台)。'
+    };
+  }
+  if(protocol==='ping'){
+    return {...base,
+      id:'ping-arg',
+      title:'解析 ping 命令參數', titleEN:'Parse ping Command Arguments',
+      protocol:'ping (Local Tool)', layer:'Application', packetType:'Arg Parse',
+      badgeClass:'b-icmp', badgeText:'ICMP', pkt:'ARG', pktColor:'#3DD9C5',
+      kpiProto:'ICMP',
+      what:`ping 工具從 \`ping ${host}\` 讀取目標、count (-c)、interval (-i)、TTL (-t)、packet size (-s)。**本機參數解析，準備產生 ICMP Echo Request**。`,
+      details:[
+        {k:'Target',v:host},
+        {k:'Protocol',v:'ICMP (no port)'},
+        {k:'ICMP Type',v:'8 (Echo Request)'},
+        {k:'Default Count',v:'4 (Linux 預設不停)'},
+      ],
+      tech:'ping 不走 TCP/UDP — ICMP 直接跑在 IP 層 (protocol number 1)，不需要 port。需 raw socket 權限。',
+      interview:'防火牆「block ping」常見但不見得正確：ICMP 還包含 path MTU discovery、destination unreachable 等必要訊息。完全 block ICMP 會破壞網路其他機制。建議只 block Echo Request/Reply (Type 8/0)。'
+    };
+  }
+  if(protocol==='traceroute'){
+    return {...base,
+      id:'trace-arg',
+      title:'解析 traceroute 命令參數', titleEN:'Parse traceroute Command Arguments',
+      protocol:'traceroute (Local Tool)', layer:'Application', packetType:'Arg Parse',
+      badgeClass:'b-icmp', badgeText:'TRACE', pkt:'ARG', pktColor:'#A78BFA',
+      kpiProto:'UDP/ICMP',
+      what:`traceroute 工具從 \`traceroute ${host}\` 讀取目標。準備從 TTL=1 開始遞增，誘發每個 hop 回 ICMP Time Exceeded，藉此繪出路徑。**本機參數解析**。`,
+      details:[
+        {k:'Target',v:host},
+        {k:'Probe Method',v:'Linux: UDP 33434+ / Windows: ICMP'},
+        {k:'TTL Range',v:'1 → 30 (預設 max)'},
+        {k:'Per-hop probes',v:'3'},
+      ],
+      tech:'traceroute 利用 TTL 副作用：路由器收到 TTL=0 必須回 ICMP Time Exceeded (RFC 792)，並把封包丟棄。這個錯誤訊息成為診斷工具。',
+      interview:'mtr (My TraceRoute) 是 traceroute 的進階版，連續探測並統計每個 hop 的封包遺失率與 jitter — 比一次性 traceroute 更有診斷價值。'
+    };
+  }
+  // Fallback
+  return {...base,
+    id:'url-parse',
+    title:'解析目標', titleEN:'Target Resolution',
+    protocol:'Client', layer:'Browser', packetType:'Parse',
+    badgeClass:'b-internal', badgeText:'INIT',
+    pkt:'INIT', pktColor:'#FFB84D',
+    kpiProto:(protocol||'').toUpperCase(),
+    what:`客戶端解析目標 ${host}，準備啟動協議流程。`,
+    details:[{k:'Target',v:host}],
+    tech:'本機操作，無網路封包。',
+    interview:''
+  };
+}
+
 // ─── SHARED DNS STEPS BUILDER ──────────────────────────
 function dnsStepsBuilder(host, isMX, mode) {
   mode = mode || 'compact';
@@ -1101,24 +1381,7 @@ function tcpStepsBuilder(port, scenario) {
 function buildFtpSteps(scenario, host) {
   const domain = host.split('.').slice(-2).join('.');
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析 FTP URL', titleEN:'FTP URL Parsing',
-      protocol:'FTP Client', layer:'Browser', packetType:'URL Parse',
-      badgeClass:'b-ftp', badgeText:'FTP',
-      from:null, to:'browser', pkt:'URL', pktColor:'#FFB84D',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'FTP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`客戶端解析 FTP URL：協定（ftp）、主機（${host}）、路徑（/pub/file.txt）。FTP 採用雙通道架構：控制通道（port 21）傳送命令，資料通道（port 20 或高位 port）傳輸檔案。`,
-      details:[
-        {k:'URL',v:'ftp://'+host+'/pub/file.txt'},
-        {k:'Control Port',v:'21'},{k:'Data Port',v:'20 (Active) / Dynamic (Passive)'},
-        {k:'Auth',v:'USER/PASS or Anonymous'},
-      ],
-      tech:'FTP（RFC 959）是雙通道協定，控制通道持續保持連線，資料通道按需建立。Passive Mode（PASV）由客戶端發起資料連線，穿越 NAT/防火牆更友善，是現代預設模式。',
-      fail:null,
-      interview:'FTP 是明文協定，USER/PASS 在網路上完全暴露。現代環境應優先使用 SFTP（SSH File Transfer Protocol，port 22）或 FTPS（FTP over TLS）。SFTP 只需單一 port，防火牆規則更簡單，是 DevOps 最常見選擇。',
-    },
+    firstStepFor('ftp', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(21, scenario),
     {
@@ -1232,24 +1495,7 @@ function buildFtpSteps(scenario, host) {
 function buildSmtpSteps(scenario, host) {
   const domain = host.split('.').slice(-2).join('.');
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析郵件地址', titleEN:'Email Address Parsing',
-      protocol:'SMTP Client (MUA)', layer:'Application', packetType:'Addr Parse',
-      badgeClass:'b-smtp', badgeText:'SMTP',
-      from:null, to:'browser', pkt:'ADDR', pktColor:'#C084FC',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'SMTP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`郵件客戶端（MUA）解析目標郵件地址（user@${domain}），提取收件人域名（${domain}），準備查詢其 MX 記錄以找到負責接收郵件的伺服器。`,
-      details:[
-        {k:'From',v:'sender@yourdomain.com'},{k:'To',v:'user@'+domain},
-        {k:'MX Target',v:domain},{k:'Submit Port',v:'587 (SUBMISSION)'},
-        {k:'Auth',v:'STARTTLS + AUTH LOGIN'},
-      ],
-      tech:'SMTP 架構分三層：MUA（郵件用戶端）、MSA（郵件提交伺服器，port 587）、MTA（郵件傳遞代理，port 25）。現代郵件流程：MUA → MSA（587/SMTPS 465）→ MTA → MTA → 收件人 MDA（IMAP/POP3）。',
-      fail:null,
-      interview:'SMTP port 25 是 MTA 對 MTA 的傳遞；port 587（SUBMISSION）是 MUA 對 MSA 的提交，需要身份驗證；port 465 是 SMTPS（TLS 封裝）。Port 25 通常被 ISP 封鎖以防止垃圾郵件。這三個 port 的區別在面試中很常考。',
-    },
+    firstStepFor('smtp', host),
     ...dnsStepsBuilder(host, true, state.dnsMode),
     ...tcpStepsBuilder(587, scenario),
     {
@@ -1372,24 +1618,7 @@ function buildSmtpSteps(scenario, host) {
 function buildImapSteps(scenario, host) {
   const domain = host.split('.').slice(-2).join('.');
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'連線至 IMAP 伺服器', titleEN:'IMAP Connection Setup',
-      protocol:'IMAP Client (MUA)', layer:'Application', packetType:'Addr Parse',
-      badgeClass:'b-imap', badgeText:'IMAP',
-      from:null, to:'browser', pkt:'IMAP', pktColor:'#2DD4BF',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'IMAP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`郵件客戶端準備連線至 IMAP 伺服器（${host}）。IMAP（port 993/IMAPS）是伺服器端同步協定，郵件保留在伺服器，支援多設備存取同一信箱。`,
-      details:[
-        {k:'Server',v:host},{k:'Port',v:'993 (IMAPS, TLS)'},
-        {k:'Protocol',v:'IMAP4rev2 (RFC 9051)'},
-        {k:'Mode',v:'Server-side sync (vs POP3 download)'},
-      ],
-      tech:'IMAP（Internet Message Access Protocol）讓郵件留在伺服器，客戶端只下載需要的部分。支援資料夾、旗標（已讀/未讀/重要）、伺服器端搜尋，非常適合多設備場景。',
-      fail:null,
-      interview:'IMAP vs POP3 是郵件協定最常見的面試題。IMAP 伺服器端同步、支援多設備、可只下載 Header；POP3 下載後刪除伺服器郵件（預設），適合單設備離線閱讀。現代郵件服務（Gmail、Outlook）全部使用 IMAP/Exchange ActiveSync。',
-    },
+    firstStepFor('imap', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(993, scenario),
     ...tlsStepsBuilder(host, 993, 4, 'IMAPS implicit TLS'),
@@ -1508,24 +1737,7 @@ function buildImapSteps(scenario, host) {
 function buildPop3Steps(scenario, host) {
   const domain = host.split('.').slice(-2).join('.');
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'連線至 POP3 伺服器', titleEN:'POP3 Connection Setup',
-      protocol:'POP3 Client (MUA)', layer:'Application', packetType:'Addr Parse',
-      badgeClass:'b-pop3', badgeText:'POP3',
-      from:null, to:'browser', pkt:'POP3', pktColor:'#FB7185',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'POP3', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`郵件客戶端準備連線至 POP3 伺服器（${host}，port 995/POP3S）。POP3 是下載式協定，郵件下載後預設從伺服器刪除，適合單設備離線閱讀。`,
-      details:[
-        {k:'Server',v:host},{k:'Port',v:'995 (POP3S, TLS)'},
-        {k:'Protocol',v:'POP3 (RFC 1939)'},
-        {k:'Behavior',v:'Download & delete (default)'},
-      ],
-      tech:'POP3（Post Office Protocol v3）設計簡單：連線 → 認證 → 下載 → 刪除 → 斷線。只有 12 個命令，無資料夾概念，無伺服器端搜索，無多設備同步。',
-      fail:null,
-      interview:'POP3 的優點：簡單、低伺服器儲存需求、支援離線閱讀（完整下載後斷線）。缺點：不支援多設備同步（第二台設備看不到已下載郵件）、無資料夾同步、難以搜索。現代應用幾乎全面採用 IMAP，POP3 主要用於遺留系統或嚴格的離線需求場景。',
-    },
+    firstStepFor('pop3', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(995, scenario),
     ...tlsStepsBuilder(host, 995, 4, 'POP3S implicit TLS'),
@@ -1626,24 +1838,7 @@ function buildSnmpSteps(scenario, host) {
   const domain = host.split('.').slice(-2).join('.');
   state.dnsMode = 'cached';
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'設定 SNMP 查詢目標', titleEN:'SNMP Target Configuration',
-      protocol:'SNMP Manager', layer:'Application', packetType:'Target Parse',
-      badgeClass:'b-snmp', badgeText:'SNMP',
-      from:null, to:'browser', pkt:'OID', pktColor:'#818CF8',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'SNMP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`SNMP Manager（網路管理站）設定查詢目標（${host}）、Community String（讀取密碼）與 OID（物件識別碼）。SNMP 使用 UDP port 161，輕量無連線特性適合大規模網路設備監控。`,
-      details:[
-        {k:'Target',v:host},{k:'Port',v:'161/UDP'},
-        {k:'Version',v:'SNMPv3 (auth + priv)'},{k:'OID',v:'1.3.6.1.2.1.1.3.0 (sysUpTime)'},
-        {k:'Community',v:'N/A (SNMPv3 uses USM)'},
-      ],
-      tech:'SNMP 三個版本：v1/v2c 使用 Community String（明文密碼，極不安全）；SNMPv3 支援 USM（User-based Security Model）提供認證（MD5/SHA）與加密（DES/AES）。',
-      fail:null,
-      interview:'SNMP Community String 是 v1/v2c 的重大安全弱點：明文傳輸且默認值（"public"/"private"）幾乎到處都是。CVE 中有大量 SNMP Community String 洩漏導致的網路設備被控事件。SNMPv3 的 authPriv 模式（認證+加密）是現代網路管理的最低安全標準。',
-    },
+    firstStepFor('snmp', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     {
       id:'snmp-get', stageIdx:3,
@@ -1679,7 +1874,7 @@ function buildSnmpSteps(scenario, host) {
       ],
       tech:'SNMP OID（Object Identifier）是 MIB（Management Information Base）中的物件路徑。標準 MIB-II（1.3.6.1.2.1）包含系統資訊、網路介面統計、IP/TCP/UDP 計數器等通用指標；廠商可擴充私有 OID（1.3.6.1.4.1）。',
       fail:null,
-      interview:'SNMP Trap（vs GetRequest）：一般 SNMP 是 Manager 主動輪詢（Poll）；SNMP Trap 是 Agent 主動推送告警（如連結中斷、高 CPU）到 Manager。現代監控系統（Zabbix、Nagios、Prometheus）通常結合 SNMP polling + Trap 實現全面監控。',
+      interview:'SNMP 兩個 port 要分清楚：**UDP 161** 是 Agent 監聽，給 Manager 來查詢用（GetRequest/GetNext/Set）；**UDP 162** 是 Manager 監聽，接收 Agent 主動推送的 **Trap / Inform** 告警（連結中斷、高 CPU 等）。一般 SNMP 是 Manager 主動輪詢（Poll），Trap 才是 Agent 主動推。現代監控系統（Zabbix、Nagios、Prometheus snmp_exporter）通常結合 polling + Trap 兩種模式。',
     },
     {
       id:'snmp-mib', stageIdx:5,
@@ -1948,20 +2143,7 @@ function udpStepsBuilder(port, label, color){
 // ─── SSH STEPS BUILDER ─────────────────────────────────
 function buildSshSteps(scenario, host){
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析 SSH 目標', titleEN:'SSH URL Parsing',
-      protocol:'SSH Client', layer:'Application', packetType:'URL Parse',
-      badgeClass:'b-ssh', badgeText:'SSH',
-      from:null, to:'browser', pkt:'URL', pktColor:'#38BDF8',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'SSH', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`客戶端解析 ssh://${host}，預設 port 22。SSH 提供加密的遠端登入、命令執行與檔案傳輸（透過 SFTP/SCP 子協定）。`,
-      details:[{k:'URL',v:'ssh://'+host},{k:'Port',v:'22'},{k:'Auth',v:'PublicKey / Password / Keyboard-Interactive'}],
-      tech:'SSH（RFC 4251）取代 Telnet/rlogin/rsh 等明文協定，提供端到端加密、伺服器身份驗證與多種認證機制。',
-      fail:null,
-      interview:'SSH 三層架構：Transport Layer（加密、伺服器認證）、User Authentication Layer、Connection Layer（多工通道）。SFTP 是跑在 SSH Connection Layer 上的子系統。',
-    },
+    firstStepFor('ssh', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(22, scenario),
     {
@@ -2050,20 +2232,7 @@ function buildSshSteps(scenario, host){
 // ─── TELNET STEPS BUILDER ──────────────────────────────
 function buildTelnetSteps(scenario, host){
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析 Telnet 目標', titleEN:'Telnet URL Parsing',
-      protocol:'Telnet Client', layer:'Application', packetType:'URL Parse',
-      badgeClass:'b-telnet', badgeText:'TELNET',
-      from:null, to:'browser', pkt:'URL', pktColor:'#94A3B8',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'TELNET', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`客戶端解析 telnet://${host}，預設 port 23。Telnet 是最古老的遠端登入協定（RFC 854，1983），全程明文，現代環境僅用於除錯網路設備或測試 TCP port。`,
-      details:[{k:'URL',v:'telnet://'+host},{k:'Port',v:'23'},{k:'Encryption',v:'❌ 無（plaintext）'}],
-      tech:'Telnet 是 SSH 出現前的標準遠端登入工具，仍廣泛存在於老舊網路設備（路由器、交換器、IoT）。',
-      fail:null,
-      interview:'Telnet 在 production 已被 SSH 取代。但 telnet 指令本身仍是測試任意 TCP port 是否開啟的便利工具（如 telnet host 80）。',
-    },
+    firstStepFor('telnet', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(23, scenario),
     {
@@ -2141,24 +2310,7 @@ function buildTelnetSteps(scenario, host){
 // ─── LDAP STEPS BUILDER ────────────────────────────────
 function buildLdapSteps(scenario, host){
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析 LDAP URL', titleEN:'LDAP URL Parsing',
-      protocol:'LDAP Client', layer:'Application', packetType:'URL Parse',
-      badgeClass:'b-ldap', badgeText:'LDAP',
-      from:null, to:'browser', pkt:'URL', pktColor:'#F472B6',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'LDAP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`客戶端解析 ldap://${host}，預設 port 389（或 ldaps:// 636 加密版本）。LDAP 用於存取階層式目錄資料（人員、部門、群組、設備）。`,
-      details:[
-        {k:'URL',v:'ldap://'+host+'/dc=example,dc=com'},
-        {k:'Port',v:'389 (StartTLS) / 636 (LDAPS)'},
-        {k:'BaseDN',v:'dc=example,dc=com'},
-      ],
-      tech:'LDAP（RFC 4511）是 X.500 的輕量化版本。Active Directory、OpenLDAP、389 Directory Server 都實作此協定。',
-      fail:null,
-      interview:'LDAP 是企業 SSO 與帳號管理的中樞：應用透過 LDAP Bind 驗證使用者，避免每個系統各自管理密碼。AD 同時也是 LDAP 伺服器（port 389/636）。',
-    },
+    firstStepFor('ldap', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(389, scenario),
     {
@@ -2228,20 +2380,7 @@ function buildLdapSteps(scenario, host){
 // ─── ECHO STEPS BUILDER (UDP) ──────────────────────────
 function buildEchoSteps(scenario, host){
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'設定 Echo 測試目標', titleEN:'Echo Target Configuration',
-      protocol:'Echo Client', layer:'Application', packetType:'Target Parse',
-      badgeClass:'b-echo', badgeText:'ECHO',
-      from:null, to:'browser', pkt:'TGT', pktColor:'#FACC15',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'ECHO', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`Echo 服務（RFC 862，port 7）會把收到的封包原封不動回傳，是最古老的網路連通性測試工具之一。Echo 同時定義了 TCP 與 UDP 版本，本流程使用 UDP，無連線、無握手。`,
-      details:[{k:'Target',v:host},{k:'Port',v:'7/UDP'},{k:'Payload',v:'"PING-12345"'}],
-      tech:'Echo 服務在現代主機預設關閉，因為缺乏存取控制可被當作 DDoS 反射放大攻擊跳板。但其概念衍生出 ICMP echo（ping）與 traceroute 中的 UDP probe。',
-      fail:null,
-      interview:'Echo / Chargen 等老舊診斷服務（RFC 862/864）若被開啟，可被用來做反射式 DDoS（攻擊者偽造受害者 IP，向 Echo server 發送請求，回應全部打到受害者）。一律建議關閉。',
-    },
+    firstStepFor('echo', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...udpStepsBuilder(7, 'PING', '#FACC15'),
     {
@@ -2304,20 +2443,7 @@ function buildEchoSteps(scenario, host){
 // ─── PPTP STEPS BUILDER ────────────────────────────────
 function buildPptpSteps(scenario, host){
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析 PPTP 目標', titleEN:'PPTP URL Parsing',
-      protocol:'PPTP Client', layer:'Application', packetType:'URL Parse',
-      badgeClass:'b-pptp', badgeText:'PPTP',
-      from:null, to:'browser', pkt:'URL', pktColor:'#A78BFA',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'PPTP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`客戶端解析 pptp://${host}，使用 TCP 1723（控制通道）+ GRE protocol 47（資料通道）。PPTP 是早期 VPN 協定，因 MS-CHAPv2 弱點現在已不安全，僅作為教學示範。`,
-      details:[{k:'URL',v:'pptp://'+host},{k:'Control',v:'TCP 1723'},{k:'Data',v:'IP protocol 47 (GRE)'}],
-      tech:'PPTP（RFC 2637）是 PPP 的隧道延伸：把 PPP frame 包進 GRE，再走 IP 層。設計簡單但密碼學早已過時。',
-      fail:null,
-      interview:'PPTP 不再是建議的 VPN 協定。現代選擇：WireGuard（最簡潔現代）、IKEv2/IPsec（行動裝置友善）、OpenVPN（成熟、跨平台）。L2TP/IPsec 也比 PPTP 安全得多。',
-    },
+    firstStepFor('pptp', host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     ...tcpStepsBuilder(1723, scenario),
     {
@@ -2660,26 +2786,7 @@ function buildPingSteps(scenario, host){
   const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(host);
   const targetIp = isIp ? host : '93.184.216.34';
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'設定 ping 目標', titleEN:'Configure ping target',
-      protocol:'ICMP Tool', layer:'Application', packetType:'Init',
-      badgeClass:'b-icmp', badgeText:'ICMP',
-      from:null, to:'browser', pkt:'TGT', pktColor:'#22D3EE',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'ICMP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`ping 是 ICMP Echo 機制（RFC 792）的命令列工具，用來測試 L3 連通性與 RTT。本流程示範 ping ${host}（4 次 Echo Request）。`,
-      details:[
-        {k:'Target',v:host},
-        {k:'Type/Code',v:'Type=8 (Echo Request) / Code=0'},
-        {k:'TTL',v:'64 (Linux default)'},
-        {k:'Payload',v:'56 bytes data + 8 bytes ICMP header = 64 bytes'},
-        {k:'Identifier',v:'PID & 0xFFFF (區分多個 ping 進程)'},
-      ],
-      tech:'ping 走在 IP 之上但無 port 概念（ICMP 不是 TCP/UDP）。Linux raw socket / Windows IcmpSendEcho API。在某些網路 ICMP 被防火牆封掉，但這不代表 host 不通 — 改試 TCP-level 探測（hping3、tcptraceroute）。',
-      fail:null,
-      interview:'ICMP 不是「網路層的 ping」這麼簡單 — 它是 IP 協定的伴生協定（IP protocol number 1），跟 TCP(6)/UDP(17) 同層級。重要 ICMP type：0/8 (Echo)、3 (Destination Unreachable)、5 (Redirect)、11 (Time Exceeded → traceroute)、4 (Source Quench, 已棄用)。',
-    },
+    firstStepFor('ping', host),
     ...(isIp ? [] : dnsStepsBuilder(host, false, state.dnsMode)),
     {
       id:'arp-resolve', stageIdx:3,
@@ -2774,25 +2881,7 @@ function buildTracerouteSteps(scenario, host){
   const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(host);
   const targetIp = isIp ? host : '93.184.216.34';
   const S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'設定 traceroute 目標', titleEN:'Configure traceroute target',
-      protocol:'traceroute (Linux)', layer:'Application', packetType:'Init',
-      badgeClass:'b-icmp', badgeText:'TRACE',
-      from:null, to:'browser', pkt:'TGT', pktColor:'#FB923C',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'TRACE', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`traceroute 利用 IP TTL 機制揭露封包路徑：故意用 TTL=1 送出，第一跳路由器丟棄並回 ICMP Time Exceeded（Type 11），客戶端因此得知第一跳的 IP；接著 TTL=2、3...，逐跳暴露完整路徑。`,
-      details:[
-        {k:'Target',v:host+' / '+targetIp},
-        {k:'Method',v:'UDP probe (Linux default, dst port 33434+)'},
-        {k:'Probes per hop',v:'3'},
-        {k:'Max hops',v:'30 (-m option)'},
-      ],
-      tech:'traceroute 的 packet 種類因平台不同：Linux 預設用 UDP probe（高 port 觸發 Port Unreachable），Windows tracert 用 ICMP Echo Request，可指定 -T 改用 TCP SYN 繞過 ICMP 防火牆規則。',
-      fail:null,
-      interview:'traceroute 看到 `* * *` 不一定代表斷線 — 很多 ISP 路由器把 ICMP rate-limit 或乾脆 disable。改用 mtr（My TraceRoute）連續測試更能看出哪一跳真的有問題。',
-    },
+    firstStepFor('traceroute', host),
     ...(isIp ? [] : dnsStepsBuilder(host, false, state.dnsMode)),
     {
       id:'trace-hop1', stageIdx:3,
@@ -2883,7 +2972,7 @@ function buildTracerouteSteps(scenario, host){
 function buildSlaacSteps(scenario, host){
   const S = [
     {
-      id:'url-parse', stageIdx:0,
+      id:'slaac-init', stageIdx:0,
       title:'IPv6 介面啟用 — 尚無位址', titleEN:'IPv6 Interface UP — No address yet',
       protocol:'IPv6 stack', layer:'Network', packetType:'Init',
       badgeClass:'b-ipv6', badgeText:'IPv6',
@@ -3234,24 +3323,7 @@ function buildSteps(scenario, host, protocol) {
   const domain = host.split('.').slice(-2).join('.');
 
   S = [
-    {
-      id:'url-parse', stageIdx:0,
-      title:'解析 URL', titleEN:'URL Parsing',
-      protocol:'Browser Internal', layer:'Browser', packetType:'URL Parse',
-      badgeClass:'b-internal', badgeText:'INTERNAL',
-      from:null, to:'browser', pkt:'URL', pktColor:'#94A3B8',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'HTTP', kpiLat:'< 1ms', kpiStatus:'OK',
-      what:`瀏覽器解析你輸入的網址，拆解出協定（${isHttps?'https':'http'}）、主機名稱（${host}）與請求路徑（/），確認需要進行 DNS 查詢。`,
-      details:[
-        {k:'URL',v:`${isHttps?'https':'http'}://${host}/`},
-        {k:'Scheme',v:isHttps?'https':'http'},
-        {k:'Host',v:host},{k:'Port',v:String(port)},{k:'Path',v:'/'},
-      ],
-      tech:'URL 解析遵循 RFC 3986。瀏覽器同時檢查 HSTS 清單，決定是否強制使用 HTTPS，以及是否有 Service Worker 攔截此請求。',
-      fail:null,
-      interview:'URL 的每個部分都有意義：scheme 決定協定、host 決定目標主機、port 決定服務埠（http 預設 80、https 預設 443）、path 決定資源位置。面試可提及 Chrome 地址欄實際上也是搜索引擎入口，會先判斷輸入是 URL 還是關鍵字。',
-    },
+    firstStepFor(protocol, host),
     ...dnsStepsBuilder(host, false, state.dnsMode),
     {
       id:'tcp-syn', stageIdx:3,
@@ -3630,31 +3702,45 @@ function wrapAbbreviations(html){
 //  Concept steps = teaching slices that don't correspond to a wire packet
 //  (state transitions, local cache lookups, router-internal mappings, render)
 // ═══════════════════════════════════════════════════════
+// Concept-only step IDs (no real packet on the wire). Verified against the
+// actual builder functions — every entry here corresponds to a real step.id
+// that exists in the codebase. Regex patterns below catch generic suffixes.
 const CONCEPT_STEP_IDS = new Set([
-  // DNS — cache hit is local lookup
+  // Local URL/config parsing — no network packet (per-protocol first step)
+  'url-parse',          // HTTPS/HTTP — actual URL parsing
+  'ftp-config',         // FTP — read client target settings
+  'mail-config',        // SMTP/IMAP/POP3 — load mail account
+  'snmp-inventory',     // SNMP — load agent IP from NMS inventory
+  'ssh-config',         // SSH — read ~/.ssh/config + known_hosts
+  'telnet-config',      // Telnet — parse cmd args
+  'ldap-config',        // LDAP — read app config
+  'echo-target',        // Echo — parse target arg
+  'vpn-config',         // PPTP — read VPN profile
+  'ping-arg',           // ping — parse cmd args
+  'trace-arg',          // traceroute — parse cmd args
+  'slaac-init',         // SLAAC — interface up, no address yet
+  // DNS — cache hit is OS-resolver memory lookup
   'dns-cache-hit',
-  // TCP/TLS — handshake "established" markers are state transitions
-  'tcp-established','tcp-est','tls-established','tls-finished-state',
-  // SLAAC — local IP generation & status
-  'slaac-linklocal','slaac-global','slaac-up','slaac-done',
-  // NAT — router-internal table operations (no separate wire packet)
-  'nat-translate-out','nat-translate-in','nat-aug-out','nat-aug-in',
-  'nat-table-update','nat-conntrack',
-  // DHCP — internal state binding
-  'dhcp-bind','dhcp-arp-check',
-  // ARP — cache write
-  'arp-cache-update',
-  // Traceroute summary
-  'trace-summary',
-  // Browser / app rendering — local computation, no network packet
-  'render-parse','render-style','render-layout','render-paint','render-done',
-  'render-html','render-css','render-js','render-composite',
+  // SLAAC — local IPv6 address generation (Modified EUI-64 / RFC 7217)
+  'slaac-linklocal','slaac-global',
+  // NAT — router-internal header rewrite (only present in standalone NAT mode;
+  // Foundation:NAT mode annotates existing TCP steps rather than injecting
+  // separate translate steps, so this Set covers the protocol='nat' walkthrough)
+  'nat-translate-out','nat-translate-in',
+  // DHCP — device boot before any packet
+  'dhcp-boot',
   // Loss annotation — the loss itself is the absence of a packet
   'tcp-loss',
+  // Traceroute / Ping — terminal UI summary, not a packet
+  'trace-summary','ping-stats',
 ]);
+// Generic suffix patterns: status-marker steps that appear at the end of many
+// flows (slaac-up, dhcp-up, ftp-done, imap-done, smtp-done, snmp-done…).
+// These render an animation to the local "render" node but represent
+// app-level state transition (file saved, mailbox synced) rather than a
+// distinct wire packet.
 const CONCEPT_STEP_PATTERNS = [
-  /^render-/,           // any render-* step
-  /-(established|done|up|ready|complete)$/,  // status-marker suffixes
+  /-(up|done|ready|complete)$/,
 ];
 function isConceptStep(step){
   if(!step || !step.id) return false;
@@ -3667,6 +3753,17 @@ function isConceptStep(step){
 // ─── PLAIN-LANGUAGE ANALOGIES (always applied) ─────────
 const BEGINNER_ANALOGIES = {
   'url-parse':       '🧠 比喻：你說「我要去 example 家」，電腦先確認這是個地址，不是搜尋。',
+  'ftp-config':      '📂 比喻：FTP 客戶端打開「站台簿」找到要連的 server 設定（帳號 / port / 模式），都還沒上網。',
+  'mail-config':     '📮 比喻：郵件 app 打開「我的郵箱設定」(server/帳密/port)，這跟你打 URL 不一樣 — 沒人會打 smtp:// 進去。',
+  'snmp-inventory':  '📋 比喻：監控系統翻自己的「設備清冊」找出要 poll 的 agent IP 與 community，全在本機 DB。',
+  'ssh-config':      '🔑 比喻：ssh 翻 ~/.ssh/config 跟 known_hosts，像查通訊錄 + 確認對方指紋符合上次來訪的人。',
+  'telnet-config':   '⌨️ 比喻：telnet 簡單到只看命令列參數 — 沒有金鑰、沒有 known_hosts，純粹「給我 host:port」。',
+  'ldap-config':     '🗂 比喻：應用程式從 config / 環境變數讀出 LDAP server URL 跟服務帳號 — 工程師事先設定好的。',
+  'echo-target':     '🎯 比喻：echo 工具就讀一個 IP:port，準備丟封包看會不會原封不動回來。',
+  'vpn-config':      '🛡 比喻：VPN client 開 profile 看裡面寫的 server / 認證方式，準備建隧道。',
+  'ping-arg':        '📡 比喻：ping 就是讀 `ping <host>`，準備產生 ICMP Echo — 不用 port、不用 socket 連線。',
+  'trace-arg':       '🛤 比喻：traceroute 讀完目標就準備從 TTL=1 開始挑釁路上每個 router。',
+  'slaac-init':      '🔌 比喻：IPv6 介面剛啟用，像剛接上網線但還沒拿到地址，準備跑 SLAAC 流程。',
   'dns-cache-hit':   '📒 比喻：像翻自己的通訊錄找電話，1 毫秒就找到了。',
   'dns-query':       '☎️ 比喻：電腦打給「DNS 查號台」問：「example.com 的住址是？」',
   'dns-return':      '📩 比喻：查號台回傳一個 IP（像門牌號碼），電腦記下來。',
@@ -3980,7 +4077,7 @@ const ALL_LAYER_BANDS = [
   { id:'session', label:'L5', sub:'SESSION', color:'#22D3EE' },
   { id:'tx',      label:'L4', sub:'TCP/UDP', color:'#4DA3FF' },
   { id:'net',     label:'L3', sub:'IP',      color:'#A78BFA' },
-  { id:'l2',      label:'L2', sub:'ETH/MAC', color:'#F472B6' },
+  { id:'l2',      label:'L2', sub:'L2 FRAME', color:'#F472B6' },
 ];
 // Protocols that genuinely have a Session-layer mechanism (control session,
 // dialog, channel multiplexing). Others stay at the standard 5-band view.
@@ -4961,7 +5058,11 @@ function initSim() {
   if(host.includes('@')) host = host.split('@').pop();
   host = host.trim();
 
-  if(!host || host.length < 2) {
+  // Protocols that don't need a target — synthesize a placeholder host
+  const cfg = INPUT_CONFIG[protocol];
+  if(cfg && !cfg.show){
+    if(!host) host = protocol==='slaac' ? 'lan.local' : (protocol==='dhcp' ? 'lan.local' : 'example.com');
+  } else if(!host || host.length < 2) {
     const w=document.getElementById('urlWrap');
     w.classList.add('shake');
     setTimeout(()=>w.classList.remove('shake'),400);
@@ -5120,24 +5221,58 @@ updateStageTabs();
   });
 })();
 
-// Update placeholder based on protocol selector
+// ─── Per-protocol input field config ────────────────
+// Different protocols need different inputs in real life:
+//   - HTTPS/HTTP/FTP: full URL
+//   - SSH/Telnet/SMTP/IMAP/POP3/LDAP/SNMP/Echo/PPTP/Ping/Traceroute: hostname/IP
+//   - DHCP/SLAAC/NAT: no target needed (host-internal or LAN-only)
+const INPUT_CONFIG = {
+  auto:      {label:'URL',           ph:'https://example.com',          show:true},
+  https:     {label:'URL',           ph:'https://example.com',          show:true},
+  http:      {label:'URL',           ph:'http://example.com',           show:true},
+  ftp:       {label:'FTP URL',       ph:'ftp://ftp.example.com',        show:true},
+  smtp:      {label:'Mail Server',   ph:'smtp.example.com',             show:true},
+  imap:      {label:'Mail Server',   ph:'imap.example.com',             show:true},
+  pop3:      {label:'Mail Server',   ph:'pop.example.com',              show:true},
+  snmp:      {label:'Agent IP',      ph:'192.168.1.1',                  show:true},
+  ssh:       {label:'Host',          ph:'user@server.example.com',      show:true},
+  telnet:    {label:'Host',          ph:'router.example.com',           show:true},
+  ldap:      {label:'LDAP Host',     ph:'ldap.example.com',             show:true},
+  echo:      {label:'Target',        ph:'192.168.1.50',                 show:true},
+  pptp:      {label:'VPN Host',      ph:'vpn.example.com',              show:true},
+  ping:      {label:'Target',        ph:'8.8.8.8',                      show:true},
+  traceroute:{label:'Target',        ph:'1.1.1.1',                      show:true},
+  // Protocols where the local host doesn't have a remote target — DHCP/SLAAC
+  // act on the LAN environment, NAT walkthrough is router-internal demo
+  dhcp:      {label:'',              ph:'',                             show:false, note:'本機開機取 IP，無 target'},
+  slaac:     {label:'',              ph:'',                             show:false, note:'IPv6 介面啟動，無 target'},
+  nat:       {label:'',              ph:'',                             show:false, note:'家用路由器內部翻譯示範'},
+};
+function applyProtocolInputUI(protocol){
+  const cfg = INPUT_CONFIG[protocol] || INPUT_CONFIG.auto;
+  const wrap = document.getElementById('urlWrap');
+  const noInp = document.getElementById('urlNoInput');
+  const prompt = document.getElementById('urlPrompt');
+  const inp = document.getElementById('urlInput');
+  if(cfg.show){
+    wrap.classList.remove('hidden');
+    noInp.classList.remove('on');
+    if(prompt) prompt.textContent = cfg.label;
+    if(inp) inp.placeholder = cfg.ph;
+  } else {
+    wrap.classList.add('hidden');
+    noInp.classList.add('on');
+    noInp.textContent = '📶 '+(cfg.note || '此協議不需輸入目標');
+  }
+}
 document.getElementById('protocolSel').addEventListener('change', function() {
-  const phMap = {
-    auto:'https://example.com', https:'https://example.com', http:'http://example.com',
-    ftp:'ftp://ftp.example.com', smtp:'smtp://mail.example.com',
-    imap:'imap://mail.example.com', pop3:'pop3://mail.example.com',
-    snmp:'snmp://192.168.1.1',
-    ssh:'ssh://server.example.com', telnet:'telnet://router.example.com',
-    ldap:'ldap://ldap.example.com', echo:'echo://192.168.1.50',
-    pptp:'pptp://vpn.example.com',
-    dhcp:'dhcp://lan.local', nat:'nat://example.com',
-    ping:'8.8.8.8', traceroute:'1.1.1.1', slaac:'slaac://lan.local',
-  };
-  document.getElementById('urlInput').placeholder = phMap[this.value] || 'https://example.com';
+  applyProtocolInputUI(this.value);
   // Rebuild OSI rail so the L5 Session band appears for PPTP and disappears for others
   drawLayerTrack(this.value);
   updateLayerTrack(state.steps[state.idx]?.layer || null);
 });
+// Apply on initial load
+applyProtocolInputUI(document.getElementById('protocolSel').value);
 
 // ─── Learning Path modal ────────────────────────────
 function renderLearningPath(){
