@@ -61,9 +61,12 @@ body{
 
 /* ─── HEADER ───────────────────────────────────────── */
 header{
-  height:64px;background:var(--bg2);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0;z-index:50;
+  min-height:64px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:8px 20px;gap:14px;flex-shrink:0;z-index:50;
+  /* Allow elements to wrap to a second row instead of overflowing */
+  flex-wrap:wrap;row-gap:8px;
 }
+.hdr-right{flex-wrap:wrap;row-gap:6px}
 .logo{display:flex;align-items:center;gap:10px;flex-shrink:0;text-decoration:none}
 .logo-mark{
   width:34px;height:34px;border-radius:9px;flex-shrink:0;
@@ -427,12 +430,20 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 
 /* ─── RESPONSIVE ────────────────────────────────────── */
 @media(max-width:1280px){.app-body{grid-template-columns:240px 1fr 320px}}
-@media(max-width:1180px){
-  /* Mid-width: drop dropdown labels & shrink selects to keep header on one row */
-  .hdr-right .scenario-group label{display:none}
+@media(max-width:1320px){
+  /* Mid-width: drop dropdown labels to keep header on one row */
+  .hdr-right .scenario-group label,
+  .hdr-protocol > label{display:none}
   select.sel{padding:6px 22px 6px 8px;font-size:11.5px}
   .hdr-right{gap:6px}
   .btn-learn{padding:0 10px;font-size:11px}
+}
+@media(max-width:1100px){
+  /* Tighter: shrink learn button to icon only, smaller selects */
+  select.sel{padding:5px 20px 5px 7px;font-size:11px}
+  .btn-learn .lp-text-label{display:none}
+  .btn-learn{padding:0 9px;font-size:14px}
+  .url-form{max-width:340px}
 }
 @media(max-width:1080px){.app-body{grid-template-columns:220px 1fr 290px}.kpi-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:920px){
@@ -555,7 +566,7 @@ abbr.jargon:hover{color:var(--accent)}
     </div>
     <div class="logo-copy">
       <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v35.2</div>
+      <div class="logo-sub">封包旅行模擬器 · v35.3</div>
     </div>
   </a>
 
@@ -634,7 +645,7 @@ abbr.jargon:hover{color:var(--accent)}
         <option value="packet-loss">📉 Packet Loss + Retransmit</option>
       </select>
     </div>
-    <button class="btn btn-learn" id="learnBtn" title="依難度選擇預設場景">🎓 學習路徑</button>
+    <button class="btn btn-learn" id="learnBtn" title="依難度選擇預設場景">🎓<span class="lp-text-label"> 學習路徑</span></button>
     <button class="btn btn-ghost" id="themeBtn" title="Toggle theme">🌙</button>
   </div>
 </header>
@@ -4085,7 +4096,7 @@ const ALL_LAYER_BANDS = [
   { id:'session', label:'L5', sub:'SESSION', color:'#22D3EE' },
   { id:'tx',      label:'L4', sub:'TCP/UDP', color:'#4DA3FF' },
   { id:'net',     label:'L3', sub:'IP',      color:'#A78BFA' },
-  { id:'l2',      label:'L2', sub:'L2 FRAME', color:'#F472B6' },
+  { id:'l2',      label:'L2', sub:'FRAME', color:'#F472B6' },
 ];
 // Protocols that genuinely have a Session-layer mechanism (control session,
 // dialog, channel multiplexing). Others stay at the standard 5-band view.
@@ -4232,9 +4243,20 @@ const STEP_PORT_HINTS = [
   {match:/^echo-verify$/,     proto:'UDP', port:7},
 ];
 
+// Map a step.layer name (e.g. "Browser", "Application", "Transport") to the
+// canonical OSI label "L7 APP" / "L4 TCP/UDP" so the Now strip and right
+// panel always show the layer number consistently.
+function formatLayerLabel(layerName){
+  if(!layerName) return '—';
+  const bandId = LAYER_BAND_MAP[layerName];
+  if(!bandId) return layerName;
+  const band = ALL_LAYER_BANDS.find(b=>b.id===bandId);
+  return band ? `${band.label} ${band.sub}` : layerName;
+}
 function deriveTransportPort(step, protocol){
-  // step.layer can be string or array — render as "L2 + L3" style for chip
-  const layerStr = (l => Array.isArray(l) ? l.join(' + ') : (l||'—'))(step?.layer);
+  // step.layer can be string or array — render as "L4 TCP/UDP + L3 IP" style
+  const formatOne = l => formatLayerLabel(l);
+  const layerStr = (l => Array.isArray(l) ? l.map(formatOne).join(' + ') : formatOne(l))(step?.layer);
   const out = {transport:'—', port:'—', layer: layerStr, dir:'—'};
   if(!step) return out;
   // Direction
@@ -4785,7 +4807,7 @@ function updateRightPanel() {
   rpTitle.textContent=step.title;
 
   // Badges — step.layer can be array
-  const layerBadgeText = Array.isArray(step.layer) ? step.layer.join(' + ') : step.layer;
+  const layerBadgeText = Array.isArray(step.layer) ? step.layer.map(formatLayerLabel).join(' + ') : formatLayerLabel(step.layer);
   const concept = isConceptStep(step);
   const pktTagHtml = concept
     ? `<span class="pkt-tag concept" title="概念步驟 — 教學切片，封包嗅探看不到">⚪ 概念</span>`
