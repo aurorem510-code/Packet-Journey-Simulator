@@ -61,9 +61,14 @@ body{
 
 /* ─── HEADER ───────────────────────────────────────── */
 header{
-  height:64px;background:var(--bg2);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:50;
-  flex-wrap:nowrap;overflow:hidden;
+  background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:stretch;
+  padding:6px 16px 8px;gap:6px;flex-shrink:0;z-index:50;
+}
+.hdr-row1{display:flex;justify-content:center;align-items:center}
+.hdr-row2{
+  display:flex;align-items:center;gap:10px;flex-wrap:nowrap;
+  overflow:hidden;
 }
 .logo{display:flex;align-items:center;gap:10px;flex-shrink:0;text-decoration:none}
 .logo-mark{
@@ -76,7 +81,7 @@ header{
 .logo-title{font-size:14px;font-weight:700;letter-spacing:-.2px;color:var(--text);white-space:nowrap}
 .logo-sub{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text2);letter-spacing:.5px}
 
-.url-form{flex:1 1 200px;min-width:160px;max-width:500px;display:flex;gap:8px}
+.url-form{flex:1 1 240px;min-width:200px;max-width:none;display:flex;gap:8px}
 .url-wrap{min-width:0}
 #urlInput{min-width:0}
 .hdr-protocol{flex-shrink:0}
@@ -444,7 +449,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   select.sel{padding:5px 20px 5px 7px;font-size:11px}
   .btn-learn .lp-text-label{display:none}
   .btn-learn{padding:0 9px;font-size:14px}
-  .url-form{max-width:340px}
+  .url-form{min-width:160px}
 }
 @media(max-width:1080px){.app-body{grid-template-columns:220px 1fr 290px}.kpi-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:920px){
@@ -561,16 +566,19 @@ abbr.jargon:hover{color:var(--accent)}
 
 <!-- ── HEADER ─────────────────────────────────────── -->
 <header>
-  <a class="logo" href="#">
-    <div class="logo-mark">
-      <svg viewBox="0 0 18 18"><circle cx="3" cy="9" r="2"/><line x1="5" y1="9" x2="8" y2="9"/><circle cx="9" cy="9" r="2"/><line x1="11" y1="9" x2="14" y2="9"/><circle cx="15" cy="9" r="2"/><path d="M9 3 L9 6.5" stroke-dasharray="2 1"/><path d="M9 11.5 L9 15" stroke-dasharray="2 1"/></svg>
-    </div>
-    <div class="logo-copy">
-      <div class="logo-title">Packet Journey Simulator</div>
-      <div class="logo-sub">封包旅行模擬器 · v35.4</div>
-    </div>
-  </a>
+  <div class="hdr-row1">
+    <a class="logo" href="#">
+      <div class="logo-mark">
+        <svg viewBox="0 0 18 18"><circle cx="3" cy="9" r="2"/><line x1="5" y1="9" x2="8" y2="9"/><circle cx="9" cy="9" r="2"/><line x1="11" y1="9" x2="14" y2="9"/><circle cx="15" cy="9" r="2"/><path d="M9 3 L9 6.5" stroke-dasharray="2 1"/><path d="M9 11.5 L9 15" stroke-dasharray="2 1"/></svg>
+      </div>
+      <div class="logo-copy">
+        <div class="logo-title">Packet Journey Simulator</div>
+        <div class="logo-sub">封包旅行模擬器 · v35.5</div>
+      </div>
+    </a>
+  </div>
 
+  <div class="hdr-row2">
   <div class="scenario-group hdr-protocol">
     <label>Protocol</label>
     <select class="sel" id="protocolSel">
@@ -649,6 +657,7 @@ abbr.jargon:hover{color:var(--accent)}
     <button class="btn btn-learn" id="learnBtn" title="依難度選擇預設場景">🎓<span class="lp-text-label"> 學習路徑</span></button>
     <button class="btn btn-ghost" id="themeBtn" title="Toggle theme">🌙</button>
   </div>
+  </div><!-- /.hdr-row2 -->
 </header>
 
 <!-- ── LEARNING PATH MODAL ──────────────────────────── -->
