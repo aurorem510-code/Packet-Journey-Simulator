@@ -261,6 +261,18 @@ select.sel:focus{border-color:var(--accent)}
   background:rgba(20,28,42,0.35);border:1px solid var(--border);border-radius:12px;padding:6px;
 }
 .osi-rail svg{width:100%;height:100%;max-height:340px;display:block}
+
+/* Horizontal OSI rail (mobile only — hidden on desktop) */
+.osi-rail-h{display:none}
+.orh-chip{
+  display:inline-flex;align-items:center;gap:5px;flex-shrink:0;
+  padding:5px 9px;border-radius:7px;
+  background:rgba(20,28,42,0.5);border:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  color:var(--text2);white-space:nowrap;transition:all .25s;
+}
+.orh-chip .orh-num{font-weight:700;font-size:11px}
+.orh-chip .orh-sub{opacity:.85}
 #topSvg{flex:1;min-width:0;width:100%;max-width:960px;height:auto;display:block;align-self:center}
 
 /* SVG node styles (set via JS setAttribute) */
@@ -458,11 +470,14 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .url-form{order:3;width:100%;max-width:none;flex:0 0 100%}
   .hdr-right{margin-left:0;flex-wrap:wrap;gap:6px}
   .app-body{display:flex;flex-direction:column;overflow:visible;min-height:0}
+  /* Mobile/tablet reading order: see the animation first → details → overall stats */
+  .center{order:1;min-height:60vh}
+  .right-panel{order:2}
+  .left-sidebar{order:3}
   .left-sidebar,.right-panel{
     border-right:none;border-bottom:1px solid var(--border);
     overflow:visible;max-height:none;
   }
-  .center{min-height:60vh}
   .topo-area{min-height:340px}
   .kpi-grid{grid-template-columns:repeat(4,1fr)}
 }
@@ -489,11 +504,20 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .btn{height:38px;padding:0 12px;font-size:11.5px}
   #startBtn{min-width:64px}
 
-  /* Topology: horizontal scroll instead of squish; OSI rail sticky-left */
-  .topo-area{min-height:240px;gap:6px;padding:8px 0 8px 6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
-  .osi-rail{width:42px;padding:3px;position:sticky;left:0;z-index:2;background:var(--bg)}
+  /* Topology: horizontal scroll without OSI rail blocking content */
+  .topo-area{min-height:240px;gap:6px;padding:6px 8px;overflow-x:auto;-webkit-overflow-scrolling:touch;justify-content:flex-start}
+  .osi-rail{display:none}  /* hide vertical rail on phone — replaced by horizontal chips above */
   #topSvg{min-width:540px;flex-shrink:0}
   .topo-area::-webkit-scrollbar{height:4px}
+
+  /* Show horizontal OSI rail (chips) instead */
+  .osi-rail-h{
+    display:flex;flex-wrap:nowrap;gap:5px;
+    padding:6px 10px;border-bottom:1px solid var(--border);
+    background:var(--bg);overflow-x:auto;-webkit-overflow-scrolling:touch;
+    flex-shrink:0;
+  }
+  .osi-rail-h::-webkit-scrollbar{height:3px}
 
   /* Stage tabs scrollable */
   .stage-row{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
@@ -632,7 +656,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v36.0</div>
+        <div class="logo-sub">封包旅行模擬器 · v36.1</div>
       </div>
     </a>
   </div>
@@ -792,6 +816,9 @@ abbr.jargon:hover{color:var(--accent)}
       <span class="ps-chip" id="psDirChip"><span class="ps-k">Direction</span><span class="ps-v" id="psDir">—</span></span>
       <span class="ps-ref" id="psRef"></span>
     </div>
+
+    <!-- Mobile-only horizontal OSI rail (chips) — replaces vertical rail on phones -->
+    <div class="osi-rail-h" id="osiRailH" title="OSI layer — chips light up when active"></div>
 
     <!-- SVG topology + OSI rail -->
     <div class="topo-area">
@@ -4268,6 +4295,39 @@ function updateLayerTrack(activeLayer){
     if(lbl) lbl.setAttribute('fill', active ? b.color : '#475569');
     if(sub) sub.setAttribute('fill', active ? b.color : '#475569');
   });
+  // Also update horizontal mobile chips (shown only on <560px via CSS)
+  updateHorizontalRail(bandIds);
+}
+
+// Build the horizontal OSI rail (chips) — mobile uses this instead of the
+// vertical SVG rail which would block the topology animation.
+function buildHorizontalRail(){
+  const el = document.getElementById('osiRailH');
+  if(!el) return;
+  el.innerHTML = ALL_LAYER_BANDS.map(b =>
+    `<span class="orh-chip" data-band="${b.id}" data-color="${b.color}">
+      <span class="orh-num">${b.label}</span><span class="orh-sub">${b.sub}</span>
+    </span>`
+  ).join('');
+}
+function updateHorizontalRail(bandIds){
+  const chips = document.querySelectorAll('#osiRailH .orh-chip');
+  chips.forEach(chip => {
+    const id = chip.dataset.band;
+    const color = chip.dataset.color;
+    const active = bandIds.has(id);
+    if(active){
+      chip.style.background = _hexAlpha(color, 0.22);
+      chip.style.borderColor = color;
+      chip.style.color = color;
+      chip.classList.add('active');
+    } else {
+      chip.style.background = '';
+      chip.style.borderColor = '';
+      chip.style.color = '';
+      chip.classList.remove('active');
+    }
+  });
 }
 
 // ─── TRANSPORT / PORT LIVE STRIP ───────────────────────
@@ -5296,6 +5356,7 @@ document.addEventListener('keydown',e=>{
 // ═══════════════════════════════════════════════════════
 drawTopology();
 drawLayerTrack();
+buildHorizontalRail();
 ensureTcpInset();
 ensureUdpInset();
 ensureCloseInset();
