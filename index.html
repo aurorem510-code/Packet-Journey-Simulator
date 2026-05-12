@@ -504,10 +504,10 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .btn{height:38px;padding:0 12px;font-size:11.5px}
   #startBtn{min-width:64px}
 
-  /* Topology: vertical stack — fits portrait phone width without scrolling */
-  .topo-area{min-height:auto;gap:0;padding:8px 8px;overflow:visible;justify-content:center;align-items:flex-start}
+  /* Topology: compact vertical stack — all 5 nodes visible at once */
+  .topo-area{min-height:auto;gap:0;padding:6px 8px;overflow:visible;justify-content:center;align-items:flex-start;flex:0 0 auto}
   .osi-rail{display:none}  /* hide vertical rail — horizontal chips above replace it */
-  #topSvg{min-width:0;width:100%;max-width:380px;height:auto;flex:0 1 auto}
+  #topSvg{min-width:0;width:100%;max-width:360px;height:auto;flex:0 0 auto}
 
   /* Show horizontal OSI rail (chips) instead */
   .osi-rail-h{
@@ -655,7 +655,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v36.2</div>
+        <div class="logo-sub">封包旅行模擬器 · v36.3</div>
       </div>
     </a>
   </div>
@@ -4040,20 +4040,27 @@ const LAYOUT_DESKTOP = {
   viewBox:'0 0 800 340',
   cardW:108, cardH:86,
   positions:[[76,170],[236,170],[396,170],[556,170],[716,170]],
+  iconFont:22, nameFont:11.5, typeFont:8.5, macFont:7,
+  iconYOff:-10, nameYOff:13, typeYOff:27, macYOff:38,
+  showTypeMac:true,
   // e-bw curves up over the DNS zone
   curvePath:(f,t)=>`M ${f.cx},${f.cy-25} C ${f.cx},40 ${t.cx},40 ${t.cx},${t.cy-25}`,
   dnsZone:{x:170,y:120,width:296,height:100,labelX:318,labelY:114},
   natBadge:{x:294,y:24,w:48,h:22,iconX:318,iconY:35,subX:318,subY:54,iconSize:10,subSize:7},
 };
 const LAYOUT_MOBILE = {
-  viewBox:'0 0 240 720',
-  cardW:180, cardH:90,
-  positions:[[120,60],[120,200],[120,340],[120,480],[120,620]],
-  // e-bw curves to the RIGHT (around the DNS zone column) on vertical layout
-  curvePath:(f,t)=>`M ${f.cx+90},${f.cy} C 232,${f.cy} 232,${t.cy} ${t.cx+90},${t.cy}`,
-  // DNS zone wraps resolver (cy:200) + recursive (cy:340) vertically
-  dnsZone:{x:25,y:150,width:190,height:240,labelX:120,labelY:143},
-  natBadge:{x:170,y:445,w:52,h:22,iconX:196,iconY:456,subX:196,subY:475,iconSize:9,subSize:7},
+  viewBox:'0 0 240 280',
+  cardW:184, cardH:44,
+  // 5 nodes spaced tight so all fit on phone without vertical scroll
+  positions:[[120,30],[120,85],[120,140],[120,195],[120,250]],
+  iconFont:16, nameFont:10.5,
+  iconYOff:-5, nameYOff:11,
+  showTypeMac:false,  // hide type+MAC; user can tap step to see details in right panel
+  // e-bw curves to the RIGHT (around DNS zone column) on vertical layout
+  curvePath:(f,t)=>`M ${f.cx+92},${f.cy} C 232,${f.cy} 232,${t.cy} ${t.cx+92},${t.cy}`,
+  // DNS zone wraps resolver (cy:85) + recursive (cy:140)
+  dnsZone:{x:25,y:60,width:190,height:105,labelX:120,labelY:53},
+  natBadge:{x:160,y:172,w:52,h:18,iconX:186,iconY:181,subX:186,subY:194,iconSize:8.5,subSize:6},
 };
 let currentLayout = LAYOUT_DESKTOP;
 function detectLayout(){ return window.innerWidth <= 560 ? LAYOUT_MOBILE : LAYOUT_DESKTOP; }
@@ -4123,38 +4130,55 @@ function drawTopology() {
   NODES.forEach(n=>{
     const g = svgEl('g',{'id':'nd-'+n.id,'cursor':'pointer'});
     // Card
-    const rect = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:H,rx:12,
+    const rect = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:H,rx:L.showTypeMac?12:8,
       fill:'var(--card)',stroke:'var(--border)','stroke-width':'1.5','id':'nrect-'+n.id});
     // Top accent strip
     const strip = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:3,rx:2,
       fill:'var(--border)','id':'nstrip-'+n.id});
     // Status dot
-    const dot = svgEl('circle',{cx:n.cx+W/2-12,cy:n.cy-H/2+10,r:5,
+    const dot = svgEl('circle',{cx:n.cx+W/2-(L.showTypeMac?12:8),cy:n.cy-H/2+(L.showTypeMac?10:7),r:L.showTypeMac?5:3.5,
       fill:'var(--text2)','id':'ndot-'+n.id});
-    // Icon
-    const icon = svgEl('text',{x:n.cx,y:n.cy-10,
-      'text-anchor':'middle','dominant-baseline':'middle','font-size':'22','id':'nicon-'+n.id});
-    icon.textContent=n.icon;
-    // Name
-    const lbl = svgEl('text',{x:n.cx,y:n.cy+13,
-      'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'11.5','font-weight':'600','fill':'var(--text)',
-      'font-family':'Inter,sans-serif','id':'nlbl-'+n.id});
-    lbl.textContent=n.name;
-    // Type
-    const type = svgEl('text',{x:n.cx,y:n.cy+27,
-      'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'8.5','fill':'var(--text2)',
-      'font-family':'JetBrains Mono,monospace','letter-spacing':'0.5','id':'ntyp-'+n.id});
-    type.textContent=n.type;
-    // MAC (small, dim — L2 information)
-    const mac = svgEl('text',{x:n.cx,y:n.cy+38,
-      'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'7','fill':'var(--text2)','opacity':'0.55',
-      'font-family':'JetBrains Mono,monospace','id':'nmac-'+n.id});
-    mac.textContent=n.mac||'';
+    const els = [rect, strip, dot];
 
-    [rect,strip,dot,icon,lbl,type,mac].forEach(el=>g.appendChild(el));
+    if(L.showTypeMac){
+      // Desktop: icon + name + type + MAC (full info card)
+      const icon = svgEl('text',{x:n.cx,y:n.cy+L.iconYOff,
+        'text-anchor':'middle','dominant-baseline':'middle','font-size':String(L.iconFont),'id':'nicon-'+n.id});
+      icon.textContent=n.icon;
+      const lbl = svgEl('text',{x:n.cx,y:n.cy+L.nameYOff,
+        'text-anchor':'middle','dominant-baseline':'middle',
+        'font-size':String(L.nameFont),'font-weight':'600','fill':'var(--text)',
+        'font-family':'Inter,sans-serif','id':'nlbl-'+n.id});
+      lbl.textContent=n.name;
+      const type = svgEl('text',{x:n.cx,y:n.cy+L.typeYOff,
+        'text-anchor':'middle','dominant-baseline':'middle',
+        'font-size':String(L.typeFont),'fill':'var(--text2)',
+        'font-family':'JetBrains Mono,monospace','letter-spacing':'0.5','id':'ntyp-'+n.id});
+      type.textContent=n.type;
+      const mac = svgEl('text',{x:n.cx,y:n.cy+L.macYOff,
+        'text-anchor':'middle','dominant-baseline':'middle',
+        'font-size':String(L.macFont),'fill':'var(--text2)','opacity':'0.55',
+        'font-family':'JetBrains Mono,monospace','id':'nmac-'+n.id});
+      mac.textContent=n.mac||'';
+      els.push(icon, lbl, type, mac);
+    } else {
+      // Mobile compact: icon LEFT, name RIGHT (horizontal in a slim card)
+      const iconX = n.cx - W/2 + 18;
+      const icon = svgEl('text',{x:iconX,y:n.cy+1,
+        'text-anchor':'middle','dominant-baseline':'middle','font-size':String(L.iconFont),'id':'nicon-'+n.id});
+      icon.textContent=n.icon;
+      const lbl = svgEl('text',{x:iconX+16,y:n.cy+1,
+        'text-anchor':'start','dominant-baseline':'middle',
+        'font-size':String(L.nameFont),'font-weight':'600','fill':'var(--text)',
+        'font-family':'Inter,sans-serif','id':'nlbl-'+n.id});
+      lbl.textContent=n.name;
+      // Stubs so updateNodeLabels() & setNodeState() can still find expected ids
+      const type = svgEl('text',{id:'ntyp-'+n.id,style:'display:none'}); type.textContent=n.type;
+      const mac = svgEl('text',{id:'nmac-'+n.id,style:'display:none'}); mac.textContent=n.mac||'';
+      els.push(icon, lbl, type, mac);
+    }
+
+    els.forEach(el=>g.appendChild(el));
     nodesG.appendChild(g);
 
     // Hover tooltip
