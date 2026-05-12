@@ -504,11 +504,10 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .btn{height:38px;padding:0 12px;font-size:11.5px}
   #startBtn{min-width:64px}
 
-  /* Topology: horizontal scroll without OSI rail blocking content */
-  .topo-area{min-height:240px;gap:6px;padding:6px 8px;overflow-x:auto;-webkit-overflow-scrolling:touch;justify-content:flex-start}
-  .osi-rail{display:none}  /* hide vertical rail on phone — replaced by horizontal chips above */
-  #topSvg{min-width:540px;flex-shrink:0}
-  .topo-area::-webkit-scrollbar{height:4px}
+  /* Topology: vertical stack — fits portrait phone width without scrolling */
+  .topo-area{min-height:auto;gap:0;padding:8px 8px;overflow:visible;justify-content:center;align-items:flex-start}
+  .osi-rail{display:none}  /* hide vertical rail — horizontal chips above replace it */
+  #topSvg{min-width:0;width:100%;max-width:380px;height:auto;flex:0 1 auto}
 
   /* Show horizontal OSI rail (chips) instead */
   .osi-rail-h{
@@ -656,7 +655,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v36.1</div>
+        <div class="logo-sub">封包旅行模擬器 · v36.2</div>
       </div>
     </a>
   </div>
@@ -4034,17 +4033,54 @@ function svgEl(tag,attrs={}) {
 function getNode(id){return NODES.find(n=>n.id===id)}
 
 // ─── DRAW TOPOLOGY ─────────────────────────────────────
+// ─── LAYOUT CONFIGS ─────────────────────────────────
+// Two arrangements: horizontal for desktop (≥561px), vertical stack for phone.
+// Vertical layout fits 5 nodes in portrait viewport without horizontal scroll.
+const LAYOUT_DESKTOP = {
+  viewBox:'0 0 800 340',
+  cardW:108, cardH:86,
+  positions:[[76,170],[236,170],[396,170],[556,170],[716,170]],
+  // e-bw curves up over the DNS zone
+  curvePath:(f,t)=>`M ${f.cx},${f.cy-25} C ${f.cx},40 ${t.cx},40 ${t.cx},${t.cy-25}`,
+  dnsZone:{x:170,y:120,width:296,height:100,labelX:318,labelY:114},
+  natBadge:{x:294,y:24,w:48,h:22,iconX:318,iconY:35,subX:318,subY:54,iconSize:10,subSize:7},
+};
+const LAYOUT_MOBILE = {
+  viewBox:'0 0 240 720',
+  cardW:180, cardH:90,
+  positions:[[120,60],[120,200],[120,340],[120,480],[120,620]],
+  // e-bw curves to the RIGHT (around the DNS zone column) on vertical layout
+  curvePath:(f,t)=>`M ${f.cx+90},${f.cy} C 232,${f.cy} 232,${t.cy} ${t.cx+90},${t.cy}`,
+  // DNS zone wraps resolver (cy:200) + recursive (cy:340) vertically
+  dnsZone:{x:25,y:150,width:190,height:240,labelX:120,labelY:143},
+  natBadge:{x:170,y:445,w:52,h:22,iconX:196,iconY:456,subX:196,subY:475,iconSize:9,subSize:7},
+};
+let currentLayout = LAYOUT_DESKTOP;
+function detectLayout(){ return window.innerWidth <= 560 ? LAYOUT_MOBILE : LAYOUT_DESKTOP; }
+function applyLayout(){
+  currentLayout = detectLayout();
+  NODES.forEach((n,i)=>{
+    const p = currentLayout.positions[i];
+    if(p){ n.cx = p[0]; n.cy = p[1]; }
+  });
+  const svg = document.getElementById('topSvg');
+  if(svg) svg.setAttribute('viewBox', currentLayout.viewBox);
+}
+
 function drawTopology() {
+  applyLayout();
+  const L = currentLayout;
   const edgesG = document.getElementById('svgEdges');
   const nodesG = document.getElementById('svgNodes');
   edgesG.innerHTML=''; nodesG.innerHTML='';
 
   // DNS zone indicator (covers OS Resolver + Recursive)
-  const zone = svgEl('rect',{x:170,y:120,width:296,height:100,rx:12,
+  const z = L.dnsZone;
+  const zone = svgEl('rect',{x:z.x,y:z.y,width:z.width,height:z.height,rx:12,
     fill:'none',stroke:'#2A3445',
     'stroke-dasharray':'4 3','stroke-width':'1','opacity':'.5','id':'dnsZoneRect'});
   edgesG.appendChild(zone);
-  const zoneLabel = svgEl('text',{x:318,y:114,
+  const zoneLabel = svgEl('text',{x:z.labelX,y:z.labelY,
     'text-anchor':'middle','font-size':'8.5','font-weight':'600',
     'letter-spacing':'1','fill':'#2A3445','font-family':'JetBrains Mono,monospace','id':'dnsZoneLabel'});
   zoneLabel.textContent='DNS RESOLUTION';
@@ -4055,10 +4091,7 @@ function drawTopology() {
     const from=getNode(e.from), to=getNode(e.to);
     let path;
     if(e.curved){
-      path = svgEl('path',{
-        'd':`M ${from.cx},${from.cy-25} C ${from.cx},40 ${to.cx},40 ${to.cx},${to.cy-25}`,
-        'class':'e-path e-dashed','id':e.id
-      });
+      path = svgEl('path',{'d':L.curvePath(from,to),'class':'e-path e-dashed','id':e.id});
     } else {
       path = svgEl('line',{
         'x1':from.cx,'y1':from.cy,'x2':to.cx,'y2':to.cy,
@@ -4068,26 +4101,27 @@ function drawTopology() {
     edgesG.appendChild(path);
   });
 
-  // NAT badge (sits at e-bw midpoint; hidden until a NAT-related step fires)
+  // NAT badge (hidden until a NAT-related step fires)
+  const nb = L.natBadge;
   const natBadge = svgEl('g', {id:'natBadge',display:'none'});
-  natBadge.appendChild(svgEl('rect',{x:294,y:24,width:48,height:22,rx:6,
+  natBadge.appendChild(svgEl('rect',{x:nb.x,y:nb.y,width:nb.w,height:nb.h,rx:6,
     fill:'rgba(251,146,60,.18)',stroke:'#FB923C','stroke-width':'1.4'}));
-  const natIcon = svgEl('text',{x:318,y:35,'text-anchor':'middle','dominant-baseline':'middle',
-    'font-size':'10','font-weight':'700','letter-spacing':'1.2',
+  const natIcon = svgEl('text',{x:nb.iconX,y:nb.iconY,'text-anchor':'middle','dominant-baseline':'middle',
+    'font-size':String(nb.iconSize),'font-weight':'700','letter-spacing':'1.2',
     fill:'#FB923C','font-family':'JetBrains Mono,monospace'});
   natIcon.textContent='🏠 NAT';
   natBadge.appendChild(natIcon);
-  const natSub = svgEl('text',{x:318,y:54,'text-anchor':'middle','dominant-baseline':'middle',
-    'font-size':'7','font-weight':'600','letter-spacing':'.8',
+  const natSub = svgEl('text',{x:nb.subX,y:nb.subY,'text-anchor':'middle','dominant-baseline':'middle',
+    'font-size':String(nb.subSize),'font-weight':'600','letter-spacing':'.8',
     fill:'#FB923C','font-family':'JetBrains Mono,monospace','id':'natBadgeSub'});
   natSub.textContent='SNAT';
   natBadge.appendChild(natSub);
   edgesG.appendChild(natBadge);
 
   // Nodes
+  const W = L.cardW, H = L.cardH;
   NODES.forEach(n=>{
     const g = svgEl('g',{'id':'nd-'+n.id,'cursor':'pointer'});
-    const W=108,H=86;
     // Card
     const rect = svgEl('rect',{x:n.cx-W/2,y:n.cy-H/2,width:W,height:H,rx:12,
       fill:'var(--card)',stroke:'var(--border)','stroke-width':'1.5','id':'nrect-'+n.id});
@@ -5357,6 +5391,27 @@ document.addEventListener('keydown',e=>{
 drawTopology();
 drawLayerTrack();
 buildHorizontalRail();
+
+// Re-layout topology when user crosses 560px boundary (resize / rotate phone)
+let _layoutDebounce;
+window.addEventListener('resize', ()=>{
+  clearTimeout(_layoutDebounce);
+  _layoutDebounce = setTimeout(()=>{
+    const newLayout = detectLayout();
+    if(newLayout !== currentLayout){
+      drawTopology();              // re-renders with new viewBox + positions
+      // Re-apply current step's visual state (active nodes/edges) onto fresh DOM
+      if(state.idx >= 0 && state.steps[state.idx]){
+        const step = state.steps[state.idx];
+        resetAllVisuals();
+        applyPrevStepsSuccess(state.idx);
+        const ns = step.isError ? 'error' : 'active';
+        step.activeNodes.forEach(n=>setNodeState(n,ns));
+        step.activeEdges.forEach(e=>setEdgeState(e,step.isError?'error':'active'));
+      }
+    }
+  }, 180);
+});
 ensureTcpInset();
 ensureUdpInset();
 ensureCloseInset();
