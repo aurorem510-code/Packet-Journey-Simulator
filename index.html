@@ -655,7 +655,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v36.3</div>
+        <div class="logo-sub">封包旅行模擬器 · v37.0</div>
       </div>
     </a>
   </div>
@@ -4244,13 +4244,15 @@ const LAYER_BAND_MAP = {
 // Full band catalog. `optional:true` bands only appear for protocols listed
 // in the corresponding *_PROTOCOLS Set below — keeps the OSI rail uncluttered
 // for protocols that don't have meaningful behavior at that layer.
+// OSI strict labels (responsibility names, not protocol names).
+// See https://en.wikipedia.org/wiki/OSI_model for canonical layer naming.
 const ALL_LAYER_BANDS = [
-  { id:'app',     label:'L7', sub:'APP',     color:'#FFB84D' },
-  { id:'pres',    label:'L6', sub:'TLS',     color:'#84CC16' },
-  { id:'session', label:'L5', sub:'SESSION', color:'#22D3EE' },
-  { id:'tx',      label:'L4', sub:'TCP/UDP', color:'#4DA3FF' },
-  { id:'net',     label:'L3', sub:'IP',      color:'#A78BFA' },
-  { id:'l2',      label:'L2', sub:'FRAME', color:'#F472B6' },
+  { id:'app',     label:'L7', sub:'APP',       color:'#FFB84D' },  // Application
+  { id:'pres',    label:'L6', sub:'PRES',      color:'#84CC16' },  // Presentation (TLS lives here)
+  { id:'session', label:'L5', sub:'SESSION',   color:'#22D3EE' },  // Session
+  { id:'tx',      label:'L4', sub:'TRANSPORT', color:'#4DA3FF' },  // Transport (TCP/UDP)
+  { id:'net',     label:'L3', sub:'NETWORK',   color:'#A78BFA' },  // Network (IP)
+  { id:'l2',      label:'L2', sub:'LINK',      color:'#F472B6' },  // Data Link (Ethernet/Wi-Fi)
 ];
 // Protocols that genuinely have a Session-layer mechanism (control session,
 // dialog, channel multiplexing). Others stay at the standard 5-band view.
@@ -4312,10 +4314,13 @@ function drawLayerTrack(protocol){
       fill:'#475569','font-family':'JetBrains Mono,monospace'});
     lbl.textContent = b.label;
     g.appendChild(lbl);
+    // Shrink font dynamically so longer OSI names (e.g. "TRANSPORT") fit the band cell
+    const subFont = b.sub.length > 7 ? '6.5' : '8';
+    const subSpacing = b.sub.length > 7 ? '0.3' : '0.8';
     const sub = svgEl('text', {
       id:'layer-sub-'+b.id, x:35, y:b.y+b.h/2+13,
       'text-anchor':'middle','dominant-baseline':'middle',
-      'font-size':'8','font-weight':'600','letter-spacing':'0.8',
+      'font-size':subFont,'font-weight':'600','letter-spacing':subSpacing,
       fill:'#475569','font-family':'JetBrains Mono,monospace'});
     sub.textContent = b.sub;
     g.appendChild(sub);
