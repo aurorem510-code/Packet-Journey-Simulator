@@ -463,9 +463,11 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .url-form{min-width:160px}
 }
 @media(max-width:1080px){.app-body{grid-template-columns:220px 1fr 290px}.kpi-grid{grid-template-columns:1fr 1fr}}
-@media(max-width:920px){
+@media(max-width:760px){
+  /* Small landscape phones / mini tablets — stack panels vertically */
   html,body{overflow:auto;height:auto;min-height:100%}
   header{height:auto;padding:10px 14px;flex-wrap:wrap;gap:10px}
+  .hdr-row2{flex-wrap:wrap}
   .url-form{order:3;width:100%;max-width:none;flex:0 0 100%}
   .hdr-right{margin-left:0;flex-wrap:wrap;gap:6px}
   .app-body{display:flex;flex-direction:column;overflow:visible;min-height:0}
@@ -479,6 +481,61 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   }
   .topo-area{min-height:340px}
   .kpi-grid{grid-template-columns:repeat(4,1fr)}
+}
+
+/* ─── iPad portrait / small tablet (761–900px): keep 3-col but go vertical SVG ─── */
+@media(min-width:761px) and (max-width:900px){
+  .app-body{grid-template-columns:170px 1fr 220px}
+  /* Header — keep single row, hide labels & version sub-line */
+  header{padding:6px 12px 8px;gap:5px}
+  .logo-sub{display:none}
+  .logo-title{font-size:12.5px}
+  .hdr-row2{gap:6px}
+  .hdr-protocol > label,
+  .hdr-right .scenario-group label{display:none}
+  select.sel{padding:5px 18px 5px 7px;font-size:11px}
+  .btn-learn .lp-text-label{display:none}
+  .btn-learn{padding:0 8px;font-size:14px}
+  .url-form{min-width:130px;flex:1 1 130px}
+  #urlInput{font-size:11.5px;padding:7px 0}
+  .url-prompt{font-size:10px;padding:2px 5px}
+  /* Sidebars — tighter */
+  .side-section{padding:8px 10px}
+  .section-label{font-size:9px;margin-bottom:6px}
+  .sc-row{font-size:10px}
+  .sc-val{max-width:90px;font-size:10.5px}
+  .kpi-grid{grid-template-columns:1fr 1fr;gap:5px}
+  .kpi{padding:6px 8px}
+  .kpi-lbl{font-size:8px}
+  .kpi-val{font-size:11.5px}
+  /* Right panel — tighter */
+  .rp-header{padding:10px 12px 8px}
+  .rp-body{padding:10px 12px;gap:8px}
+  .rp-title{font-size:13.5px}
+  /* Topology — vertical SVG (mobile layout) inside the horizontal grid */
+  .topo-area{padding:8px 10px;gap:0;align-items:flex-start;justify-content:center;overflow:auto}
+  .osi-rail{display:none}
+  #topSvg{min-width:0;width:100%;max-width:320px;height:auto;flex:0 0 auto}
+  /* Horizontal OSI chips replace the vertical rail */
+  .osi-rail-h{
+    display:flex;flex-wrap:nowrap;gap:5px;
+    padding:6px 10px;border-bottom:1px solid var(--border);
+    background:var(--bg);overflow-x:auto;-webkit-overflow-scrolling:touch;
+    flex-shrink:0;
+  }
+  .osi-rail-h::-webkit-scrollbar{height:3px}
+  .stage-row .stage-chip{font-size:10.5px;padding:8px 10px}
+  .port-strip{padding:6px 10px;gap:5px}
+}
+
+/* ─── iPad landscape / mid tablet (901–1024px): tighter sidebars ─── */
+@media(min-width:901px) and (max-width:1024px){
+  .app-body{grid-template-columns:200px 1fr 260px}
+  .logo-sub{display:none}
+  .logo-title{font-size:13px}
+  .side-section{padding:9px 11px}
+  .rp-header{padding:11px 13px 9px}
+  .rp-body{padding:11px 13px;gap:9px}
 }
 @media(max-width:560px){
   /* === MOBILE PORTRAIT (phones) === */
@@ -654,7 +711,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v38.0</div>
+        <div class="logo-sub">封包旅行模擬器 · v38.1</div>
       </div>
     </a>
   </div>
@@ -3708,7 +3765,7 @@ const LAYOUT_MOBILE = {
   natBadge:{x:160,y:172,w:52,h:18,iconX:186,iconY:181,subX:186,subY:194,iconSize:8.5,subSize:6},
 };
 let currentLayout = LAYOUT_DESKTOP;
-function detectLayout(){ return window.innerWidth <= 560 ? LAYOUT_MOBILE : LAYOUT_DESKTOP; }
+function detectLayout(){ return window.innerWidth <= 900 ? LAYOUT_MOBILE : LAYOUT_DESKTOP; }
 function applyLayout(){
   currentLayout = detectLayout();
   NODES.forEach((n,i)=>{
@@ -4003,7 +4060,7 @@ function updateLayerTrack(activeLayer){
     if(lbl) lbl.setAttribute('fill', active ? b.color : '#475569');
     if(sub) sub.setAttribute('fill', active ? b.color : '#475569');
   });
-  // Also update horizontal mobile chips (shown only on <560px via CSS)
+  // Also update horizontal OSI chips (shown on ≤900px via CSS — phones + iPad portrait)
   updateHorizontalRail(bandIds);
 }
 
@@ -5059,7 +5116,7 @@ drawTopology();
 drawLayerTrack();
 buildHorizontalRail();
 
-// Re-layout topology when user crosses 560px boundary (resize / rotate phone)
+// Re-layout topology when user crosses 900px boundary (resize / rotate phone / tablet)
 let _layoutDebounce;
 window.addEventListener('resize', ()=>{
   clearTimeout(_layoutDebounce);
