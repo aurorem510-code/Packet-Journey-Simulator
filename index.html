@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW" data-theme="dark">
+<html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -27,25 +27,6 @@
   --warning-a:rgba(255,184,77,.18);
   --error-a:  rgba(255,107,107,.18);
 }
-[data-theme="light"] {
-  --bg:      #F0F4F8;
-  --bg2:     #FFFFFF;
-  --card:    #FFFFFF;
-  --border:  #D1DBE8;
-  --text:    #1A2332;
-  --text2:   #5A6B7E;
-  --accent:  #0EA5A0;
-  --info:    #2563EB;
-  --success: #16A34A;
-  --warning: #D97706;
-  --error:   #DC2626;
-  --accent-a: rgba(14,165,160,.12);
-  --info-a:   rgba(37,99,235,.12);
-  --success-a:rgba(22,163,74,.12);
-  --warning-a:rgba(217,119,6,.12);
-  --error-a:  rgba(220,38,38,.12);
-}
-
 /* ─── RESET ────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
@@ -486,19 +467,30 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 /* ─── iPad portrait / small tablet (761–900px): keep 3-col but go vertical SVG ─── */
 @media(min-width:761px) and (max-width:900px){
   .app-body{grid-template-columns:170px 1fr 220px}
-  /* Header — keep single row, hide labels & version sub-line */
-  header{padding:6px 12px 8px;gap:5px}
+  /* Header — compact, controls strictly fit on one row */
+  header{padding:4px 10px 6px;gap:2px}
+  .hdr-row1{padding:0;min-height:0}
+  .logo{gap:6px}
+  .logo-mark{width:26px;height:26px;border-radius:7px}
+  .logo-mark svg{width:14px;height:14px}
   .logo-sub{display:none}
-  .logo-title{font-size:12.5px}
-  .hdr-row2{gap:6px}
+  .logo-title{font-size:11.5px}
+  .hdr-row2{gap:4px;overflow:hidden;flex-wrap:nowrap;align-items:center}
   .hdr-protocol > label,
   .hdr-right .scenario-group label{display:none}
-  select.sel{padding:5px 18px 5px 7px;font-size:11px}
+  /* Shrinkable, compact selects — never let one push siblings off-screen */
+  select.sel{padding:4px 16px 4px 6px;font-size:10.5px;min-width:0;max-width:125px;width:auto}
+  .hdr-protocol{min-width:0;flex-shrink:1}
+  .hdr-protocol select.sel{max-width:115px}
+  .hdr-right{gap:4px;margin-left:auto;min-width:0;flex-shrink:1}
+  .hdr-right .scenario-group{min-width:0;flex-shrink:1}
   .btn-learn .lp-text-label{display:none}
-  .btn-learn{padding:0 8px;font-size:14px}
-  .url-form{min-width:130px;flex:1 1 130px}
-  #urlInput{font-size:11.5px;padding:7px 0}
-  .url-prompt{font-size:10px;padding:2px 5px}
+  .btn-learn{padding:0 7px;font-size:14px;height:30px;flex-shrink:0}
+  .url-form{min-width:130px;flex:1 1 130px;gap:5px}
+  .url-wrap{padding:0 8px}
+  #urlInput{font-size:11px;padding:6px 0}
+  .url-prompt{font-size:9.5px;padding:2px 4px}
+  #startBtn{height:30px;padding:0 10px;font-size:11px;min-width:auto}
   /* Sidebars — tighter */
   .side-section{padding:8px 10px}
   .section-label{font-size:9px;margin-bottom:6px}
@@ -533,6 +525,9 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .app-body{grid-template-columns:200px 1fr 260px}
   .logo-sub{display:none}
   .logo-title{font-size:13px}
+  .hdr-row2{overflow:hidden;flex-wrap:nowrap}
+  select.sel{min-width:0;max-width:150px}
+  .hdr-protocol,.hdr-right .scenario-group{min-width:0;flex-shrink:1}
   .side-section{padding:9px 11px}
   .rp-header{padding:11px 13px 9px}
   .rp-body{padding:11px 13px;gap:9px}
@@ -554,7 +549,7 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
   .hdr-right .scenario-group label{display:none}
   .hdr-right .scenario-group{flex:1 1 0;min-width:90px}
   .hdr-right .scenario-group select.sel{width:100%}
-  .btn-learn,#themeBtn{flex:0 0 auto}
+  .btn-learn{flex:0 0 auto}
   select.sel{padding:7px 22px 7px 8px;font-size:11px}
   /* Touch-friendly button sizes (44px target where reasonable) */
   .btn{height:38px;padding:0 12px;font-size:11.5px}
@@ -711,7 +706,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v38.1</div>
+        <div class="logo-sub">封包旅行模擬器 · v38.2</div>
       </div>
     </a>
   </div>
@@ -789,7 +784,6 @@ abbr.jargon:hover{color:var(--accent)}
       </select>
     </div>
     <button class="btn btn-learn" id="learnBtn" title="依難度選擇預設場景">🎓<span class="lp-text-label"> 學習路徑</span></button>
-    <button class="btn btn-ghost" id="themeBtn" title="Toggle theme">🌙</button>
   </div>
   </div><!-- /.hdr-row2 -->
 </header>
@@ -5093,12 +5087,6 @@ document.getElementById('resetBtn').addEventListener('click',()=>resetSim());
 document.getElementById('speedRange').addEventListener('input',e=>{
   state.speed=parseFloat(e.target.value);
   document.getElementById('speedLbl').textContent=state.speed+'×';
-});
-
-document.getElementById('themeBtn').addEventListener('click',()=>{
-  const light = document.documentElement.dataset.theme==='light';
-  document.documentElement.dataset.theme = light ? 'dark' : 'light';
-  document.getElementById('themeBtn').textContent = light ? '🌙' : '☀️';
 });
 
 document.addEventListener('keydown',e=>{
