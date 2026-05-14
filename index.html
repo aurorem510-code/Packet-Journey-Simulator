@@ -367,7 +367,6 @@ input[type=range]{width:76px;accent-color:var(--accent);cursor:pointer}
 .b-snmp{background:rgba(129,140,248,.12);color:#818CF8;border:1px solid rgba(129,140,248,.28)}
 .b-ssh{background:rgba(56,189,248,.12);color:#38BDF8;border:1px solid rgba(56,189,248,.28)}
 .b-telnet{background:rgba(148,163,184,.12);color:#94A3B8;border:1px solid rgba(148,163,184,.28)}
-.b-ldap{background:rgba(244,114,182,.12);color:#F472B6;border:1px solid rgba(244,114,182,.28)}
 .b-echo{background:rgba(250,204,21,.12);color:#FACC15;border:1px solid rgba(250,204,21,.28)}
 .b-pptp{background:rgba(167,139,250,.12);color:#A78BFA;border:1px solid rgba(167,139,250,.28)}
 .b-udp{background:rgba(250,176,5,.12);color:#FAB005;border:1px solid rgba(250,176,5,.28)}
@@ -655,7 +654,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v37.2</div>
+        <div class="logo-sub">封包旅行模擬器 · v38.0</div>
       </div>
     </a>
   </div>
@@ -674,10 +673,9 @@ abbr.jargon:hover{color:var(--accent)}
         <option value="imap">📥 IMAP</option>
         <option value="pop3">📬 POP3</option>
       </optgroup>
-      <optgroup label="── Remote / Directory ──">
+      <optgroup label="── Remote / File ──">
         <option value="ssh">🔐 SSH</option>
         <option value="telnet">⌨️ Telnet</option>
-        <option value="ldap">🗂 LDAP</option>
         <option value="ftp">📁 FTP</option>
       </optgroup>
       <optgroup label="── Tooling ──">
@@ -685,9 +683,6 @@ abbr.jargon:hover{color:var(--accent)}
         <option value="echo">🔁 Echo</option>
         <option value="ping">🏓 ping (ICMP Echo)</option>
         <option value="traceroute">🛤 traceroute (TTL hops)</option>
-      </optgroup>
-      <optgroup label="── IPv6 ──">
-        <option value="slaac">🔮 SLAAC + NDP (IPv6 boot)</option>
       </optgroup>
       <optgroup label="── VPN / Tunnel ──">
         <option value="pptp">🛡 PPTP</option>
@@ -929,14 +924,12 @@ const PROTOCOL_LABELS = {
   snmp:     { browser:['SNMP Manager','NMS','📡'],      webserver:['SNMP Agent','Device','🔧'],        render:['MIB Parser','Data','📊'] },
   ssh:      { browser:['SSH Client','Terminal','💻'],   webserver:['SSH Server','sshd','🔐'],          render:['Encrypted Shell','PTY','⌨️'] },
   telnet:   { browser:['Telnet Client','Terminal','⌨️'],webserver:['Telnet Server','telnetd','📟'],    render:['Plaintext Shell','PTY','🖥'] },
-  ldap:     { browser:['LDAP Client','App','🗂'],       webserver:['LDAP Server','slapd','🏛'],        render:['Directory Entries','DIT','📑'] },
   echo:     { browser:['Echo Client','Tester','🔁'],    webserver:['Echo Server','port 7','🪞'],       render:['Verify Output','Match','✅'] },
   pptp:     { browser:['VPN Client','Initiator','🛡'],  webserver:['VPN Concentrator','PNS','🏰'],     render:['Tunneled Network','GRE','🌐'] },
   dhcp:     { browser:['Client (no IP)','Booting','💻'],webserver:['DHCP Server','LAN Gateway','📮'],  render:['Network Ready','IF UP','📶'] },
   nat:      { browser:['LAN Client','192.168.1.42','🏠'],webserver:['Public Server','203.0.113.5','🌍'],render:['Response Received','LAN','📥'] },
   ping:     { browser:['ping host','Source','🏓'],      webserver:['Target','Echo responder','🎯'],   render:['RTT Stats','min/avg/max','📊'] },
   traceroute:{ browser:['traceroute host','Source','🛤'],webserver:['Hop 3 / Target','Final','🎯'],   render:['Path Summary','Hops + RTT','📋'] },
-  slaac:    { browser:['IPv6 Client','Booting','💻'],   webserver:['IPv6 Router','RA / NDP','🛰'],    render:['IPv6 Ready','Dual-stack','🔮'] },
 };
 
 const DNS_ZONE_LABELS = {
@@ -946,7 +939,7 @@ const DNS_ZONE_LABELS = {
 
 // Protocols where the "render" node represents the SAME machine as the client
 // (e.g. SSH terminal, SNMP manager dashboard) rather than a separate stage.
-const LOCAL_RENDER_PROTOCOLS = new Set(['ssh','telnet','ldap','snmp','echo']);
+const LOCAL_RENDER_PROTOCOLS = new Set(['ssh','telnet','snmp','echo']);
 
 function updateNodeLabels(protocol){
   const map = PROTOCOL_LABELS[protocol] || PROTOCOL_LABELS.https;
@@ -1044,14 +1037,12 @@ function getStages(p, foundation) {
   else if(p==='snmp')   stages=['Target Parse','DNS Lookup','IP Resolved','UDP GetRequest','GetResponse','MIB Parse','Complete'];
   else if(p==='ssh')    stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Key Exchange','Authentication','Shell'];
   else if(p==='telnet') stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','Negotiation','Login','Shell'];
-  else if(p==='ldap')   stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','LDAP Bind','Search','Result'];
   else if(p==='echo')   stages=['Target Parse','DNS Lookup','IP Resolved','UDP Send','UDP Echo','Verify','Complete'];
   else if(p==='pptp')   stages=['URL Parse','DNS Lookup','IP Resolved','TCP Control','PPTP Setup','GRE Tunnel','Connected'];
   else if(p==='dhcp')   stages=['Boot','DISCOVER','OFFER','REQUEST','ACK','Network Up'];
   else if(p==='nat')    stages=['LAN Origin','DNS','SYN @ NAT','Translate Out','Public Leg','Translate In','Established'];
   else if(p==='ping')   stages=['Configure','DNS Lookup','IP Resolved','ARP Resolve','Echo Request','Echo Reply','Stats'];
   else if(p==='traceroute') stages=['Configure','DNS Lookup','IP Resolved','Hop 1','Hop 2','Hop 3','Path Summary'];
-  else if(p==='slaac')  stages=['IF Up','Link-Local Gen','DAD','Router Solicit','Router Adv','Global Gen','IPv6 Up','DNS AAAA + Ready'];
   else                  stages=['URL Parse','DNS Lookup','IP Resolved','TCP Handshake','HTTP Request','Response','Render'];
 
   // Foundation prefix: DHCP boot prepends 6 stages to any app protocol
@@ -1064,9 +1055,9 @@ function getStages(p, foundation) {
 // ─── TRANSPORT MAP (TCP vs UDP visualization) ──────────
 const TRANSPORT_MAP = {
   https:'tcp', http:'tcp', ftp:'tcp', smtp:'tcp', imap:'tcp', pop3:'tcp',
-  ssh:'tcp', telnet:'tcp', ldap:'tcp', pptp:'tcp', nat:'tcp',
+  ssh:'tcp', telnet:'tcp', pptp:'tcp', nat:'tcp',
   snmp:'udp', echo:'udp', dhcp:'udp',
-  ping:'icmp', traceroute:'icmp', slaac:'icmp',
+  ping:'icmp', traceroute:'icmp',
 };
 const STAGES = getStages('https');
 
@@ -1234,24 +1225,6 @@ function firstStepFor(protocol, host){
       ],
       tech:'Telnet (RFC 854) 是 1969 年的協議，原本就沒有加密設計。NVT (Network Virtual Terminal) 抽象在 SSH 之前是遠端管理的標準。',
       interview:'Telnet 仍有用：連線到網路設備的 console (out-of-band 管理)、Mainframe IBM 3270、舊版工業設備。但任何**有公網路徑**的 Telnet 都應視為高風險，應改 SSH。'
-    };
-  }
-  if(protocol==='ldap'){
-    return {...base,
-      id:'ldap-config',
-      title:'應用程式內 LDAP 設定', titleEN:'Application LDAP Config Load',
-      protocol:'LDAP Client (App)', layer:'Application', packetType:'Config Load',
-      badgeClass:'b-ldap', badgeText:'LDAP', pkt:'CFG', pktColor:'#84CC16',
-      kpiProto:'LDAP',
-      what:`應用程式 (Web app / 內部系統) 從 config file / 環境變數 / Vault 讀取 LDAP 連線資訊：URL=ldap://${host}:389 或 ldaps://${host}:636、Bind DN (服務帳號)、Bind Password、Search Base、TLS 設定。**本機 config 讀取，無網路封包**。`,
-      details:[
-        {k:'LDAP URL',v:'ldap://'+host+':389'},
-        {k:'LDAPS',v:'ldaps://'+host+':636 (implicit TLS)'},
-        {k:'Bind DN',v:'cn=svc-account,ou=services,dc=corp,dc=com'},
-        {k:'Search Base',v:'dc=corp,dc=com'},
-      ],
-      tech:'LDAP URL (RFC 4516) 包含 host、port、scope、filter — 但實務上應用直接使用 binding API 而非 URL 字串。',
-      interview:'LDAP vs Active Directory：AD 是微軟以 LDAP 為基礎 + Kerberos 認證 + DNS 為定位機制的綜合體。slapd (OpenLDAP) 是開源版 LDAP server。'
     };
   }
   if(protocol==='echo'){
@@ -2421,76 +2394,6 @@ function buildTelnetSteps(scenario, host){
   return S;
 }
 
-// ─── LDAP STEPS BUILDER ────────────────────────────────
-function buildLdapSteps(scenario, host){
-  const S = [
-    firstStepFor('ldap', host),
-    ...dnsStepsBuilder(host, false, state.dnsMode),
-    ...tcpStepsBuilder(389, scenario),
-    {
-      id:'ldap-bind', stageIdx:4,
-      title:'LDAP Bind — 認證', titleEN:'LDAP Bind Operation',
-      protocol:'LDAP (port 389)', layer:'Application', packetType:'BindRequest',
-      badgeClass: scenario==='auth-fail'?'b-error':'b-ldap',
-      badgeText: scenario==='auth-fail'?'BIND FAIL':'LDAP',
-      from:'browser', to:'webserver', pkt:'BIND', pktColor:'#F472B6',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'LDAP', kpiLat:'~ 15ms', kpiStatus: scenario==='auth-fail'?'INVALID CREDENTIALS':'BOUND',
-      what: scenario==='auth-fail'
-        ? '客戶端送出 Bind Request（DN + 密碼），伺服器比對失敗回傳 invalidCredentials (49)。'
-        : '客戶端送出 Bind Request：以 DN（Distinguished Name）與密碼（或 SASL 機制）向伺服器表明身份。Bind 成功後才能執行後續操作。',
-      details: scenario==='auth-fail'
-        ? [{k:'BindDN',v:'cn=admin,dc=example,dc=com'},{k:'Method',v:'simple'},{k:'Result',v:'invalidCredentials (49)',c:'c-error'}]
-        : [{k:'BindDN',v:'cn=admin,dc=example,dc=com'},{k:'Method',v:'simple / SASL'},{k:'Result',v:'success (0)',c:'c-success'}],
-      tech:'Anonymous Bind（空 DN + 空密碼）若被允許，攻擊者可列舉目錄結構。Hardening 建議 disallow anonymous bind 並強制 LDAPS / StartTLS。',
-      fail: scenario==='auth-fail'?'LDAP Bind 失敗（invalidCredentials）。檢查 BindDN 拼寫、密碼是否過期、帳號是否被鎖定（pwdAccountLockedTime）。簡單 bind 走 port 389 時為明文，建議改用 LDAPS（636）或 StartTLS。':null,
-      interview:'LDAP Bind 是大量 SSO 系統的認證後端。LDAP Injection（未過濾使用者輸入直接拼接 filter）是 OWASP Top 10 等級的漏洞，等同 SQL Injection。',
-      isError: scenario==='auth-fail',
-    },
-    {
-      id:'ldap-search', stageIdx:5,
-      title:'LDAP Search — 查詢', titleEN:'LDAP Search Operation',
-      protocol:'LDAP', layer:'Application', packetType:'SearchRequest',
-      badgeClass:'b-ldap', badgeText:'LDAP',
-      from:'browser', to:'webserver', pkt:'SEARCH', pktColor:'#F472B6',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'LDAP', kpiLat:'~ 20ms', kpiStatus:'SEARCHING',
-      what:'客戶端送出 SearchRequest，指定 BaseDN、Scope、Filter 與要回傳的屬性。',
-      details:[
-        {k:'BaseDN',v:'ou=users,dc=example,dc=com'},
-        {k:'Scope',v:'subtree (wholeSubtree)'},
-        {k:'Filter',v:'(&(objectClass=person)(uid=alice))'},
-        {k:'Attrs',v:'cn, mail, memberOf'},
-      ],
-      tech:'LDAP Filter 採前綴運算式：(&(A=1)(B=2)) = AND；(|(...)(...)) = OR；(!(...)) = NOT。索引設計直接影響查詢效能。',
-      fail:null,
-      interview:'LDAP Filter Injection：若程式碼直接拼接使用者輸入到 filter，攻擊者可注入 *)(uid=*) 等模式繞過認證。永遠對輸入做 ESC 處理（RFC 4515）。',
-    },
-    {
-      id:'ldap-result', stageIdx:6,
-      title:'結果回傳', titleEN:'Search Result Entries',
-      protocol:'LDAP', layer:'Application', packetType:'SearchResultEntry',
-      badgeClass:'b-ldap', badgeText:'LDAP',
-      from:'webserver', to:'render', pkt:'ENTRIES', pktColor:'#45D483',
-      activeNodes:['browser','webserver','render'], activeEdges:['e-bw','e-ws'],
-      kpiProto:'LDAP', kpiLat:'~25ms', kpiStatus:'COMPLETE',
-      what:'伺服器回傳一個或多個 SearchResultEntry，最後以 SearchResultDone（含結果碼 0=success）結束。',
-      details:[
-        {k:'dn',v:'uid=alice,ou=users,dc=example,dc=com'},
-        {k:'cn',v:'Alice Wang'},
-        {k:'mail',v:'alice@example.com',c:'c-success'},
-        {k:'memberOf',v:'cn=engineers,ou=groups,...'},
-      ],
-      tech:'LDAP 回應是流式的：每筆 Entry 一個 PDU，最後一個 SearchResultDone 標示結束。客戶端可用 paged results 控制大集合。',
-      fail:null,
-      interview:'LDAP referral（指引）：當查詢的 DN 不在本伺服器，回應可能是 referral，把客戶端導向另一台伺服器。AD 多 forest 環境常見此行為。',
-      isLast:true,
-    },
-  ];
-  if(scenario==='dns-fail') return truncateDnsFail(S);
-  return S;
-}
-
 // ─── ECHO STEPS BUILDER (UDP) ──────────────────────────
 function buildEchoSteps(scenario, host){
   const S = [
@@ -3082,206 +2985,6 @@ function buildTracerouteSteps(scenario, host){
   return S;
 }
 
-// ─── IPv6 SLAAC + NDP STEPS BUILDER ────────────────────
-function buildSlaacSteps(scenario, host){
-  const S = [
-    {
-      id:'slaac-init', stageIdx:0,
-      title:'IPv6 介面啟用 — 尚無位址', titleEN:'IPv6 Interface UP — No address yet',
-      protocol:'IPv6 stack', layer:'Network', packetType:'Init',
-      badgeClass:'b-ipv6', badgeText:'IPv6',
-      from:null, to:'browser', pkt:'BOOT', pktColor:'#A78BFA',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'NO ADDR',
-      what:'⚠️ <b>SLAAC 取代的是 DHCP（位址自動配置），不是 DNS。</b><br>連 example.com 仍要問 DNS 拿 AAAA 記錄（A 是 IPv4，AAAA 是 IPv6）。本流程只示範「IPv6 主機 boot 取得 IP + GW + DNS server 位址」這個一次性過程，等同於 IPv4 的 DHCP DORA — 不代表 IPv6 連線過程不需要 DNS。<br><br>NDP（Neighbor Discovery Protocol，跑在 ICMPv6 上）取代了 ARP（IPv4 的 L2 解析）。本流程示範 IPv6 主機從零到取得 Link-Local + Global IPv6 + Default GW + DNS server 位址 的完整 boot。',
-      details:[
-        {k:'MAC',v:'02:42:ac:11:00:02'},
-        {k:'IPv6 state',v:'No address',c:'c-warning'},
-        {k:'NDP',v:'ICMPv6 type 133-137 (RS/RA/NS/NA/Redirect)'},
-      ],
-      tech:'IPv6 拋棄了 ARP（IPv4 唯一不在 IP 內的 L2 解析）— 改用 ICMPv6 統一處理鄰居發現、地址自動配置、router 公告等。整個 IPv6 boot 不需要 DHCP server 存在（雖然 DHCPv6 仍可選用做集中管理）。',
-      fail:null,
-      interview:'IPv6 的設計初衷之一是「讓網路自我組織」— SLAAC 比 DHCP 更去中心化。但企業仍偏好 DHCPv6（記錄哪台機器拿哪個 IP、做 ACL 與計費）— 兩者並非互斥，現代部署常並用（SLAAC for address + DHCPv6 for DNS/options，叫 stateless DHCPv6）。',
-    },
-    {
-      id:'slaac-linklocal', stageIdx:1,
-      title:'產生 Link-Local 位址', titleEN:'Generate Link-Local fe80::',
-      protocol:'IPv6 / EUI-64 or RFC 7217', layer:'Network', packetType:'Address Gen',
-      badgeClass:'b-ipv6', badgeText:'IPv6',
-      from:'browser', to:'browser', pkt:'fe80::', pktColor:'#A78BFA',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'fe80::1',
-      what:'介面啟用就自動產生 Link-Local 位址（fe80::/10 開頭）— 不需任何外部協助。經典做法用 EUI-64：取 MAC 地址插入 fffe + 翻轉 U/L bit。現代 OS 用 RFC 7217 隨機化以保護隱私（避免 MAC 跨網段被追蹤）。',
-      details:[
-        {k:'Prefix',v:'fe80::/10 (Link-Local)'},
-        {k:'EUI-64 example',v:'fe80::042:acff:fe11:0002 (from MAC)'},
-        {k:'RFC 7217',v:'fe80::a3b2:c40f:8e22:1d77 (隨機化)',c:'c-info'},
-        {k:'Scope',v:'同 link 內，不可路由'},
-      ],
-      tech:'每個 IPv6 介面都必須有 Link-Local 位址（即使沒有 Global IP），用於 NDP、OSPFv3、BGP 同 link 鄰居等。雙協議堆疊機器同時有 IPv4 + Link-Local + Global IPv6。',
-      fail:null,
-      interview:'EUI-64 把 MAC 嵌進 IP 暴露隱私（追蹤同一台筆電到處跑），所以 RFC 4941（temporary addresses）+ RFC 7217（stable but opaque）已是現代預設。Windows、macOS、Linux 預設都已啟用。',
-    },
-    {
-      id:'slaac-dad', stageIdx:2,
-      title:'DAD — 重複位址偵測', titleEN:'Duplicate Address Detection (NS)',
-      protocol:'ICMPv6 NDP', layer:['Link','Network'], packetType:'Neighbor Solicitation',
-      badgeClass:'b-ipv6', badgeText:'NDP',
-      from:'browser', to:'webserver', pkt:'NS-DAD', pktColor:'#A78BFA',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'NDP', kpiLat:'~ 1s', kpiStatus:'unique',
-      what:'裝置送出 Neighbor Solicitation（ICMPv6 type 135），dst = solicited-node multicast (ff02::1:ff_xx:xxxx)，問「有人用這個位址嗎？」沒人回應 → 該位址沒衝突可用。等待 ~1 秒。',
-      details:[
-        {k:'src',v:'::（unspecified，DAD 期間還沒位址）'},
-        {k:'dst',v:'ff02::1:ff11:0002 (solicited-node multicast)',c:'c-info'},
-        {k:'Target',v:'fe80::042:acff:fe11:0002 (要驗證的位址)'},
-        {k:'Timer',v:'RetransTimer (預設 1000ms) × DupAddrDetectTransmits (1)'},
-        {k:'No reply',v:'位址確認可用',c:'c-success'},
-      ],
-      tech:'IPv4 也有重複位址偵測（gratuitous ARP），但 IPv6 把這做成強制流程的一部分。DAD 時若收到回應 → 該位址已被佔用，介面拒絕設置該位址，必須換一個。',
-      fail:null,
-      interview:'DAD 在大規模 Wi-Fi 環境（咖啡廳、機場）會慢一點，因為 multicast 廣播範圍大。Apple 設備用 RFC 4429 Optimistic DAD：DAD 還沒完成就先用該位址（樂觀），衝突時才放棄 — 加快連線速度。',
-    },
-    {
-      id:'slaac-rs', stageIdx:3,
-      title:'Router Solicitation', titleEN:'RS — Ask for Router',
-      protocol:'ICMPv6 NDP', layer:'Network', packetType:'Type 133',
-      badgeClass:'b-ipv6', badgeText:'NDP',
-      from:'browser', to:'webserver', pkt:'RS', pktColor:'#A78BFA',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'NDP', kpiLat:'~ 5ms', kpiStatus:'RS sent',
-      what:'有 Link-Local 位址後，主機送 Router Solicitation（ICMPv6 type 133）到「all routers multicast」 (ff02::2)，請求路由器「立刻回 RA 給我，不要等下一個排程公告」（router 預設每 200 秒主動公告一次）。',
-      details:[
-        {k:'ICMPv6 Type',v:'133 (Router Solicitation)'},
-        {k:'src',v:'fe80::042:acff:fe11:0002'},
-        {k:'dst',v:'ff02::2 (all-routers multicast)',c:'c-info'},
-        {k:'Source Link-Layer',v:'Option: 02:42:ac:11:00:02'},
-      ],
-      tech:'RS 是「主動觸發」機制，省去等待 router 排程公告（最壞 200 秒）。沒 RS 主機也會收到下個排程 RA，只是慢。',
-      fail:null,
-      interview:'IPv6 router 必須週期性發 RA，這是 IPv6 跟 IPv4 的根本差異 — IPv4 router 不會「自我介紹」，主機需手動或 DHCP 學到 GW。IPv6 改成 router 主動廣播，網路自我組織。',
-    },
-    {
-      id:'slaac-ra', stageIdx:4,
-      title:'Router Advertisement', titleEN:'RA — Router Public Announcement',
-      protocol:'ICMPv6 NDP', layer:'Network', packetType:'Type 134',
-      badgeClass:'b-ipv6', badgeText:'NDP',
-      from:'webserver', to:'browser', pkt:'RA', pktColor:'#A78BFA',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'NDP', kpiLat:'~ 8ms', kpiStatus:'RA received',
-      what:'路由器以 multicast (ff02::1, all-nodes) 回 Router Advertisement，內含：Prefix（你可以用 2001:db8::/64）、Default Router lifetime、RDNSS（DNS server 位址，RFC 8106）、MTU、Hop Limit 等所有主機需要的資訊。',
-      details:[
-        {k:'ICMPv6 Type',v:'134 (Router Advertisement)'},
-        {k:'Prefix',v:'2001:db8:abcd::/64 (autonomous flag = 1)',c:'c-success'},
-        {k:'Default Router',v:'fe80::1 (router Link-Local)',c:'c-success'},
-        {k:'RDNSS',v:'2001:4860:4860::8888 (Google DNS over IPv6)',c:'c-success'},
-        {k:'Valid Lifetime',v:'2592000s (30 天)'},
-        {k:'M/O flag',v:'M=0, O=0 (純 SLAAC，不用 DHCPv6)'},
-      ],
-      tech:'M (Managed) flag = 1 表示「也用 DHCPv6 拿位址」；O (Other) flag = 1 表示「位址自己 SLAAC，但 DNS 等選項從 DHCPv6 拿」。M=0,O=0 是純 SLAAC（典型家用）；M=0,O=1 是 stateless DHCPv6（企業常見）；M=1 是完整 DHCPv6。',
-      fail:null,
-      interview:'RA Guard（RFC 6105）：交換器層面阻擋非授權的 RA，防止 rogue RA 攻擊 — 攻擊者偽造 RA 公告自己是 default GW，把流量導引去自己。對應 IPv4 的 DHCP Snooping 機制。',
-    },
-    {
-      id:'slaac-global', stageIdx:5,
-      title:'產生 Global IPv6 + 設定路由', titleEN:'Derive Global IPv6 + Routes',
-      protocol:'IPv6 / SLAAC', layer:'Network', packetType:'Address Gen',
-      badgeClass:'b-ipv6', badgeText:'IPv6',
-      from:'browser', to:'browser', pkt:'2001:db8::', pktColor:'#A78BFA',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'IPv6', kpiLat:'< 1ms', kpiStatus:'GLOBAL UP',
-      what:'主機把 RA 內的 Prefix (2001:db8:abcd::/64) 跟自己的 interface ID 拼起來，產生 Global IPv6 — 同樣可選 EUI-64 或 RFC 7217 隨機化。寫入 routing table、寫入 /etc/resolv.conf（或 systemd-resolved）。',
-      details:[
-        {k:'Global IPv6',v:'2001:db8:abcd::a3b2:c40f:8e22:1d77',c:'c-success'},
-        {k:'Default route',v:'::/0 via fe80::1 (router LL addr)'},
-        {k:'DNS',v:'2001:4860:4860::8888'},
-        {k:'Privacy addr',v:'另外產生 RFC 4941 temporary，每天輪換',c:'c-info'},
-      ],
-      tech:'同一介面常同時有多個 IPv6：Link-Local (fe80::)、Stable Privacy (RFC 7217)、Temporary (RFC 4941，每天換)、Multicast subscriber 位址。源位址選擇依 RFC 6724 規則：偏好 stable 對外、temporary 對 outbound。',
-      fail:null,
-      interview:'IPv6 端到端原則：理論上每台機器都有公網 IP — 沒有 NAT 困擾。但實務上：1) ISP 給你 /64 或 /56 prefix delegation；2) 你家內部仍可能要 prefix subnetting；3) 防火牆/家用路由器仍 stateful 過濾入站；4) 隱私顧慮讓 temporary address 是必要的。',
-    },
-    {
-      id:'slaac-up', stageIdx:6,
-      title:'IPv6 配置就緒 — 啟用 dual-stack', titleEN:'IPv6 Stack Ready',
-      protocol:'OS Network Stack', layer:'Network', packetType:'IF UP',
-      badgeClass:'b-ipv6', badgeText:'IPv6',
-      from:'browser', to:'browser', pkt:'UP', pktColor:'#45D483',
-      activeNodes:['browser'], activeEdges:[],
-      kpiProto:'IPv6', kpiLat:'~ 2ms', kpiStatus:'STACK UP',
-      what:'IPv6 配置就緒：Link-Local 同網段用、Global IPv6 對外用、default route via fe80::1、DNS server 位址 2001:4860:4860::8888 已寫入。<br><br>但這只代表「網路層配置好了」 — 要連到 example.com 還是得做 DNS 查詢。下一步示範 IPv6 環境下的 DNS AAAA 查詢。',
-      details:[
-        {k:'eth0',v:'fe80::a3b2:.../64 + 2001:db8:abcd::a3b2:.../64',c:'c-success'},
-        {k:'default route',v:'::/0 via fe80::1',c:'c-success'},
-        {k:'DNS server',v:'2001:4860:4860::8888 (待會就要用到它)',c:'c-info'},
-        {k:'Status',v:'Dual-stack with IPv4 if available',c:'c-info'},
-      ],
-      tech:'IPv6 socket API 同 IPv4：socket(AF_INET6, SOCK_STREAM, 0) → getaddrinfo() 解析 → connect()。使用者程式碼幾乎一樣，差別在於 getaddrinfo 同時拿 AAAA + A 記錄，由 OS 決定先用哪個。',
-      fail:null,
-      interview:'IPv6-only 配 NAT64 (RFC 6146) + DNS64 (RFC 6147) 是現代行動網路趨勢。AT&T、T-Mobile、台灣 NCC 推動的 IPv6-only 行動網路即此架構。Server 端透明 IPv4 連通靠 NAT64 翻譯。',
-    },
-    {
-      id:'slaac-dns-query', stageIdx:7,
-      title:'DNS AAAA 查詢 — 解析 IPv6 主機名稱', titleEN:'DNS AAAA Query (over IPv6)',
-      protocol:'DNS / UDP 53 (over IPv6)', layer:'Application', packetType:'AAAA Query',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'browser', to:'recursive', pkt:'AAAA?', pktColor:'#3DD9C5',
-      activeNodes:['browser','resolver','recursive'], activeEdges:['e-br','e-rr'],
-      kpiProto:'DNS/UDP6', kpiLat:'~ 12ms', kpiStatus:'AAAA QUERY',
-      what:'要連到 example.com 必須先做 DNS 查詢 — IPv6 環境問的是 <b>AAAA 記錄</b>（A 是 IPv4 / AAAA 是 IPv6）。封包本身的 src/dst IP 都是 IPv6（client 用 Global IPv6 → DNS server 2001:4860:4860::8888，UDP 53）。注意：DNS protocol 本身一樣，只是 IP 層走 IPv6。',
-      details:[
-        {k:'Query',v:'example.com IN AAAA'},
-        {k:'L3 src',v:'2001:db8:abcd::a3b2:c40f:8e22:1d77 (我的 Global IPv6)'},
-        {k:'L3 dst',v:'2001:4860:4860::8888 (Google Public DNS)',c:'c-info'},
-        {k:'L4',v:'UDP src=ephemeral, dst=53'},
-        {k:'OS',v:'多數 OS 並行送 A + AAAA (Happy Eyeballs)'},
-      ],
-      tech:'DNS 與 IP 版本是兩個獨立概念。你可以用 IPv4 查 AAAA、也可以用 IPv6 查 A — DNS 是一個應用協定，IP 層走哪版只影響傳輸路徑。實務上現代解析器（systemd-resolved、unbound）會雙協定並行查詢。',
-      fail:null,
-      interview:'AAAA 是「四 A」— 因為 IPv6 是 128-bit / IPv4 是 32-bit，128/32=4，所以是 4 個 A。RFC 3596。記憶法：IPv4=A、IPv6=AAAA。混淆度高，面試常考。',
-    },
-    {
-      id:'slaac-dns-response', stageIdx:7,
-      title:'AAAA 回應 — 拿到 IPv6 位址', titleEN:'AAAA Response (IPv6 Address)',
-      protocol:'DNS Response (over IPv6)', layer:'Application', packetType:'AAAA Response',
-      badgeClass:'b-dns', badgeText:'DNS',
-      from:'recursive', to:'browser', pkt:'2606:2800::', pktColor:'#45D483',
-      activeNodes:['browser','resolver','recursive'], activeEdges:['e-br','e-rr'],
-      kpiProto:'DNS/UDP6', kpiLat:'~ 24ms', kpiStatus:'RESOLVED',
-      what:'解析器回傳 example.com 的 IPv6 位址：<b>2606:2800:220:1:248:1893:25c8:1946</b>。客戶端寫入 OS resolver cache（與 IPv4 cache 共用），現在可以發起 IPv6 TCP 連線了。',
-      details:[
-        {k:'AAAA',v:'2606:2800:220:1:248:1893:25c8:1946',c:'c-success'},
-        {k:'TTL',v:'21600s (6h)'},
-        {k:'Authoritative',v:'a.iana-servers.net'},
-        {k:'Now: socket()',v:'AF_INET6 + connect(2606:2800:...:443)',c:'c-info'},
-      ],
-      tech:'getaddrinfo() 在 dual-stack 環境同時拿 A + AAAA，依 RFC 6724 / 8305（Happy Eyeballs v2）規則優先嘗試 IPv6，250ms 內若沒建立連線則 fallback 到 IPv4。',
-      fail:null,
-      interview:'為什麼有些網站只有 A 沒有 AAAA？— 因為 server 端不支援 IPv6（CDN、雲服務多半已支援，但中小型網站常見只有 IPv4）。檢查方式：`dig AAAA example.com` 或 `host -t AAAA example.com`。',
-    },
-    {
-      id:'slaac-done', stageIdx:7,
-      title:'IPv6 + DNS 全鏈通暢', titleEN:'IPv6 + DNS End-to-End Ready',
-      protocol:'IPv6 stack', layer:'Application', packetType:'Ready',
-      badgeClass:'b-ipv6', badgeText:'IPv6',
-      from:'browser', to:'render', pkt:'✓', pktColor:'#45D483',
-      activeNodes:['browser','render'], activeEdges:['e-ws'],
-      kpiProto:'IPv6', kpiLat:'~ 26ms 累積', kpiStatus:'READY',
-      what:'從零到端到端 IPv6 連線就緒：① 介面 UP ② Link-Local + DAD ③ RS/RA ④ Global IPv6 derive ⑤ DNS AAAA 查詢 ⑥ 拿到 IPv6 位址。從這刻起所有後續 TCP/TLS/HTTP 流程跟 IPv4 完全一樣，只是 IP 層走 IPv6。',
-      details:[
-        {k:'My IPv6',v:'2001:db8:abcd::a3b2:c40f:8e22:1d77'},
-        {k:'Target IPv6',v:'2606:2800:220:1:248:1893:25c8:1946',c:'c-success'},
-        {k:'GW',v:'fe80::1'},
-        {k:'Next',v:'NDP NS for next-hop MAC → TCP SYN over IPv6 → ...',c:'c-info'},
-      ],
-      tech:'IPv6 之上的 TCP/TLS/HTTP 與 IPv4 完全相同 — header format、port、handshake 機制都不變。差別只在 L3：IPv6 header（40 bytes 固定）取代 IPv4 header（20+ bytes 可變）；TCP/UDP 重新計算 checksum 時把 IPv6 的 pseudo-header 算進去。',
-      fail:null,
-      interview:'你可以在同一條 socket 用 IPv6 連到 IPv4-only 主機嗎？可以！IPv4-mapped IPv6 address (::ffff:0:0/96) — 例如 ::ffff:93.184.216.34 表示 IPv4 的 93.184.216.34。Linux 的 IPv6 socket 預設啟用 IPv4 兼容模式 (IPV6_V6ONLY=0)。',
-      isLast:true,
-    },
-  ];
-  return S;
-}
 
 // ─── FOUNDATION COMPOSER (DHCP prefix + NAT annotation) ──
 // DHCP runs ONCE before any app gets an IP. NAT is applied as annotations
@@ -3293,7 +2996,7 @@ function composeFoundation(appSteps, foundation, scenario, host, protocol){
   //   - SLAAC: IPv6 self-config — DHCP (IPv4) / NAT (IPv4) are conceptually
   //            incompatible (you can't "DHCP-boot before SLAAC"; they're for
   //            different IP versions and dual-stack would be a separate flow)
-  if(protocol==='dhcp' || protocol==='nat' || protocol==='slaac') return appSteps;
+  if(protocol==='dhcp' || protocol==='nat') return appSteps;
   if(!foundation || foundation==='none') return appSteps;
   let result = appSteps.map(s => ({...s}));
 
@@ -3378,14 +3081,12 @@ function buildSteps(scenario, host, protocol) {
   else if(protocol==='snmp')   S = buildSnmpSteps(scenario, host);
   else if(protocol==='ssh')    S = buildSshSteps(scenario, host);
   else if(protocol==='telnet') S = buildTelnetSteps(scenario, host);
-  else if(protocol==='ldap')   S = buildLdapSteps(scenario, host);
   else if(protocol==='echo')   S = buildEchoSteps(scenario, host);
   else if(protocol==='pptp')   S = buildPptpSteps(scenario, host);
   else if(protocol==='dhcp')   S = buildDhcpSteps(scenario, host);
   else if(protocol==='nat')    S = buildNatSteps(scenario, host);
   else if(protocol==='ping')   S = buildPingSteps(scenario, host);
   else if(protocol==='traceroute') S = buildTracerouteSteps(scenario, host);
-  else if(protocol==='slaac')  S = buildSlaacSteps(scenario, host);
   if(S){
     S = injectArpResolve(S, scenario);
     S = injectTcpClose(S, protocol, scenario);
@@ -3707,8 +3408,8 @@ const LEARNING_PRESETS = [
     set:{ protocol:'http', scenario:'normal', foundation:'none', dnsMode:'compact', host:'http://example.com' }
   },
   {
-    lv:'Lv5', name:'進階：丟包重傳 / IPv6 / VPN',
-    desc:'CCNP 級主題：TCP 擁塞控制（slow start, fast retransmit, cwnd）、IPv6 SLAAC + NDP、PPTP VPN 隧道。建議在熟悉前四級後再嘗試。',
+    lv:'Lv5', name:'進階：丟包重傳 / VPN',
+    desc:'CCNP 級主題：TCP 擁塞控制（slow start, fast retransmit, cwnd 砍半）、PPTP VPN 隧道。建議在熟悉前四級後再嘗試。',
     cfg:'HTTPS · Packet Loss + Retransmit',
     set:{ protocol:'https', scenario:'packet-loss', foundation:'none', dnsMode:'compact', host:'https://example.com' }
   },
@@ -3789,16 +3490,12 @@ const CONCEPT_STEP_IDS = new Set([
   'snmp-inventory',     // SNMP — load agent IP from NMS inventory
   'ssh-config',         // SSH — read ~/.ssh/config + known_hosts
   'telnet-config',      // Telnet — parse cmd args
-  'ldap-config',        // LDAP — read app config
   'echo-target',        // Echo — parse target arg
   'vpn-config',         // PPTP — read VPN profile
   'ping-arg',           // ping — parse cmd args
   'trace-arg',          // traceroute — parse cmd args
-  'slaac-init',         // SLAAC — interface up, no address yet
   // DNS — cache hit is OS-resolver memory lookup
   'dns-cache-hit',
-  // SLAAC — local IPv6 address generation (Modified EUI-64 / RFC 7217)
-  'slaac-linklocal','slaac-global',
   // NAT — router-internal header rewrite (only present in standalone NAT mode;
   // Foundation:NAT mode annotates existing TCP steps rather than injecting
   // separate translate steps, so this Set covers the protocol='nat' walkthrough)
@@ -3811,7 +3508,7 @@ const CONCEPT_STEP_IDS = new Set([
   'trace-summary','ping-stats',
 ]);
 // Generic suffix patterns: status-marker steps that appear at the end of many
-// flows (slaac-up, dhcp-up, ftp-done, imap-done, smtp-done, snmp-done…).
+// flows (dhcp-up, ftp-done, imap-done, smtp-done, snmp-done…).
 // These render an animation to the local "render" node but represent
 // app-level state transition (file saved, mailbox synced) rather than a
 // distinct wire packet.
@@ -3834,12 +3531,10 @@ const BEGINNER_ANALOGIES = {
   'snmp-inventory':  '📋 比喻：監控系統翻自己的「設備清冊」找出要 poll 的 agent IP 與 community，全在本機 DB。',
   'ssh-config':      '🔑 比喻：ssh 翻 ~/.ssh/config 跟 known_hosts，像查通訊錄 + 確認對方指紋符合上次來訪的人。',
   'telnet-config':   '⌨️ 比喻：telnet 簡單到只看命令列參數 — 沒有金鑰、沒有 known_hosts，純粹「給我 host:port」。',
-  'ldap-config':     '🗂 比喻：應用程式從 config / 環境變數讀出 LDAP server URL 跟服務帳號 — 工程師事先設定好的。',
   'echo-target':     '🎯 比喻：echo 工具就讀一個 IP:port，準備丟封包看會不會原封不動回來。',
   'vpn-config':      '🛡 比喻：VPN client 開 profile 看裡面寫的 server / 認證方式，準備建隧道。',
   'ping-arg':        '📡 比喻：ping 就是讀 `ping <host>`，準備產生 ICMP Echo — 不用 port、不用 socket 連線。',
   'trace-arg':       '🛤 比喻：traceroute 讀完目標就準備從 TTL=1 開始挑釁路上每個 router。',
-  'slaac-init':      '🔌 比喻：IPv6 介面剛啟用，像剛接上網線但還沒拿到地址，準備跑 SLAAC 流程。',
   'dns-cache-hit':   '📒 比喻：像翻自己的通訊錄找電話，1 毫秒就找到了。',
   'dns-query':       '☎️ 比喻：電腦打給「DNS 查號台」問：「example.com 的住址是？」',
   'dns-return':      '📩 比喻：查號台回傳一個 IP（像門牌號碼），電腦記下來。',
@@ -3882,9 +3577,6 @@ const BEGINNER_ANALOGIES = {
   'telnet-nego':     '⚙️ 比喻：雙方協商「要不要回顯？要不要彩色？」這些終端機選項。',
   'telnet-login':    '🔓 比喻：你輸入帳號密碼 — 但這些字在網路上是「裸奔」的。',
   'telnet-shell':    '🖥 比喻：登入成功，可以下指令，但任何竊聽者都看得一清二楚。',
-  'ldap-bind':       '🔑 比喻：你向「目錄總機」自我介紹（綁定 DN + 密碼），證明你是誰。',
-  'ldap-search':     '🔍 比喻：你說「幫我找 ou=users 底下姓王的人」，伺服器翻索引給你。',
-  'ldap-result':     '📑 比喻：總機把符合條件的人事資料一筆筆送回來。',
   'udp-send':        '📨 比喻：UDP 像寄明信片 — 直接丟到郵筒，不用先打招呼建連線。',
   'udp-echo':        '🪞 比喻：對方收到後把你的訊息原封不動「鏡射」回來，用來驗證鏈路通了。',
   'echo-verify':     '✅ 比喻：你比對寄出與收到的內容，一致就代表這條路是通的。',
@@ -3912,15 +3604,6 @@ const BEGINNER_ANALOGIES = {
   'trace-hop2':      '🛤 比喻：再寄一封貼「能走 2 站」的郵票 — 走到第 2 站才退回，第 2 站身份揭露。',
   'trace-hop3':      '🎯 比喻：「能走 3 站」剛好抵達目的地 — 對方收到後回的不是退回單，而是「不知這封信」(Port Unreachable)，你就知道路徑全長。',
   'trace-summary':   '📋 比喻：把全部退回單跟最終回應整理 → 完整路徑地圖。',
-  'slaac-linklocal': '🏷 比喻：IPv6 介面一啟用就先給自己一個「本地暱稱」(fe80::)，跟 router 還沒講話前就能跟同網段鄰居互動。',
-  'slaac-dad':       '🤚 比喻：用新位址前先大聲問：「有人在用這個位址嗎？」沒人回應 → 是空的，可以用。',
-  'slaac-rs':        '📢 比喻：「有 router 在嗎？我剛上線，請現在就告訴我網路設定，不要等下一輪公告。」',
-  'slaac-ra':        '🛰 比喻：router 公告：「我是預設閘道，prefix 給你拿去拼自己的 IP，DNS 是這幾個。」',
-  'slaac-global':    '🔮 比喻：拿到 prefix 後跟自己的 interface ID 拼起來 → 你的全球唯一 IPv6 位址出爐。',
-  'slaac-up':        '✅ 比喻：IPv6 網路設定完成（IP/GW/DNS server 都拿到了），但要連到 example.com 還是得問 DNS。',
-  'slaac-dns-query': '☎️ 比喻：拿著 IPv6 電話打給「DNS 查號台」（也是 IPv6 號碼）：「example.com 的 IPv6 是？」',
-  'slaac-dns-response':'📩 比喻：查號台回傳一個 IPv6 門牌號碼，總算可以開始連線了 — 證明 IPv6 也得用 DNS。',
-  'slaac-done':      '🔮 比喻：完整 IPv6 鏈路通暢 — IP 配好、DNS 查到、可以 TCP 了。',
   'tcp-loss':        '📉 比喻：寄出去的信被郵差弄丟了一封 — 後面幾封都到了，但收件人發現「中間少一封」。',
   'tcp-dup-ack':     '🔁 比喻：收件人連續送 3 張回條都寫「我只收到到第 5 封」，寄件人就知道第 6 封一定是丟了。',
   'tcp-fast-retransmit':'⚡ 比喻：寄件人立刻補寄第 6 封，順便把「同時寄出量」砍半 — 避免再被擠爆。',
@@ -4367,7 +4050,6 @@ const PROTOCOL_PORTS = {
   pop3:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'POP3S', proto:'TCP', port:995, layer:'tx'}],
   ssh:   [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'SSH',   proto:'TCP', port:22,  layer:'tx'}],
   telnet:[{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'TELNET',proto:'TCP', port:23,  layer:'tx'}],
-  ldap:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'LDAP',  proto:'TCP', port:389, layer:'tx'}],
   pptp:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'CTRL',  proto:'TCP', port:1723,layer:'tx'}, {label:'GRE',  proto:'GRE', port:'IP-47', layer:'net'}],
   snmp:  [{label:'SNMP', proto:'UDP', port:161, layer:'tx'}],
   echo:  [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'ECHO',  proto:'UDP', port:7,   layer:'tx'}],
@@ -4375,7 +4057,6 @@ const PROTOCOL_PORTS = {
   nat:   [{label:'DNS',  proto:'UDP', port:53,  layer:'tx'}, {label:'TCP',   proto:'TCP', port:443, layer:'tx'}, {label:'NAT-Tbl',proto:'TCP',port:'L4',layer:'tx'}],
   ping:  [{label:'ICMP', proto:'ICMP',port:'IP-1', layer:'net'}, {label:'ARP', proto:'ARP', port:'EtherType 0x0806', layer:'net'}],
   traceroute:[{label:'ICMP',proto:'ICMP',port:'IP-1', layer:'net'}, {label:'UDP probe',proto:'UDP',port:33434,layer:'tx'}],
-  slaac: [{label:'NDP', proto:'ICMPv6',port:'IP-58',layer:'net'}],
 };
 
 const STEP_PORT_HINTS = [
@@ -4391,7 +4072,6 @@ const STEP_PORT_HINTS = [
   {match:/^snmp-/,            proto:'UDP', port:161},
   {match:/^ssh-/,             follow:true},
   {match:/^telnet-/,          follow:true},
-  {match:/^ldap-/,            follow:true},
   {match:/^pptp-(control|setup)$/, follow:true},
   {match:/^pptp-gre$/,        proto:'GRE', port:'IP-47'},
   {match:/^echo-verify$/,     proto:'UDP', port:7},
@@ -5171,14 +4851,12 @@ function showDoneOverlay(){
     snmp:'SNMP 監控查詢完成，涵蓋 DNS、UDP GetRequest、MIB 解析。',
     ssh:'SSH 加密連線建立完成，涵蓋 DNS、TCP 三向交握、金鑰交換、認證與互動 Shell。',
     telnet:'Telnet 明文遠端登入完成，涵蓋 DNS、TCP、選項協商與 Login。',
-    ldap:'LDAP 目錄查詢完成，涵蓋 DNS、TCP、Bind、Search 與結果回傳。',
     echo:'Echo 測試完成，使用 UDP 無連線傳送並驗證回應一致。',
     pptp:'PPTP VPN 隧道建立完成，涵蓋 TCP 控制通道與 GRE 隧道封裝。',
     dhcp:'DHCP DORA 流程完成，主機取得 IP、預設閘道、DNS 與 lease，網路設定就緒。',
     nat:'NAT 連線完成：私有 IP 經 NAT 轉換為公網 IP，回程依 NAT 表反向轉換回 LAN。',
     ping:'ping 完成：4 個 ICMP Echo Request 全部收到 Reply，平均 RTT ~12ms，loss 0%。',
     traceroute:'traceroute 完成：3 跳路徑揭露（家用 GW → ISP CGNAT → 目標），TTL 機制驗證有效。',
-    slaac:'IPv6 從 boot 到 DNS 完整流程：SLAAC + NDP 配置 → DNS AAAA 查詢拿到 IPv6 位址。SLAAC 取代 DHCP（自動配置），但 DNS 仍是必要 — 流程明確示範這一點。',
   };
   document.getElementById('doneDesc').textContent=protoDesc[state.protocol]||protoDesc.https;
   document.getElementById('doneStats').innerHTML=`
@@ -5228,14 +4906,12 @@ function initSim() {
     else if(/^snmp:\/\//i.test(raw))     protocol = 'snmp';
     else if(/^ssh:\/\//i.test(raw))      protocol = 'ssh';
     else if(/^telnet:\/\//i.test(raw))   protocol = 'telnet';
-    else if(/^ldaps?:\/\//i.test(raw))   protocol = 'ldap';
     else if(/^echo:\/\//i.test(raw))     protocol = 'echo';
     else if(/^pptp:\/\//i.test(raw))     protocol = 'pptp';
     else if(/^dhcp:\/\//i.test(raw))     protocol = 'dhcp';
     else if(/^nat:\/\//i.test(raw))      protocol = 'nat';
     else if(/^ping:\/\//i.test(raw))     protocol = 'ping';
     else if(/^trace(route)?:\/\//i.test(raw)) protocol = 'traceroute';
-    else if(/^slaac:\/\//i.test(raw))    protocol = 'slaac';
     else if(/^http:\/\//i.test(raw))     protocol = 'http';
     else                                 protocol = 'https';
   }
@@ -5250,7 +4926,7 @@ function initSim() {
   // Protocols that don't need a target — synthesize a placeholder host
   const cfg = INPUT_CONFIG[protocol];
   if(cfg && !cfg.show){
-    if(!host) host = protocol==='slaac' ? 'lan.local' : (protocol==='dhcp' ? 'lan.local' : 'example.com');
+    if(!host) host = protocol==='dhcp' ? 'lan.local' : 'example.com';
   } else if(!host || host.length < 2) {
     const w=document.getElementById('urlWrap');
     w.classList.add('shake');
@@ -5271,7 +4947,7 @@ function initSim() {
   const foundationEl=document.getElementById('foundationSel');
   state.foundation = foundationEl ? foundationEl.value : 'none';
   // Foundation only makes sense for app protocols. Standalone DHCP/NAT views ignore it.
-  if(protocol==='dhcp' || protocol==='nat' || protocol==='slaac') state.foundation='none';
+  if(protocol==='dhcp' || protocol==='nat') state.foundation='none';
   if(protocol==='snmp') state.dnsMode='cached';
   state.netProfile = detectNetworkProfile(host);
   state.steps=scaleStepLatencies(applyAnalogies(buildSteps(state.scenario,state.host,state.protocol)), state.netProfile);
@@ -5448,7 +5124,6 @@ const INPUT_CONFIG = {
   snmp:      {label:'Agent IP',      ph:'192.168.1.1',                  show:true},
   ssh:       {label:'Host',          ph:'user@server.example.com',      show:true},
   telnet:    {label:'Host',          ph:'router.example.com',           show:true},
-  ldap:      {label:'LDAP Host',     ph:'ldap.example.com',             show:true},
   echo:      {label:'Target',        ph:'192.168.1.50',                 show:true},
   pptp:      {label:'VPN Host',      ph:'vpn.example.com',              show:true},
   ping:      {label:'Target',        ph:'8.8.8.8',                      show:true},
@@ -5456,7 +5131,6 @@ const INPUT_CONFIG = {
   // Protocols where the local host doesn't have a remote target — DHCP/SLAAC
   // act on the LAN environment, NAT walkthrough is router-internal demo
   dhcp:      {label:'',              ph:'',                             show:false, note:'本機開機取 IP，無 target'},
-  slaac:     {label:'',              ph:'',                             show:false, note:'IPv6 介面啟動，無 target'},
   nat:       {label:'',              ph:'',                             show:false, note:'家用路由器內部翻譯示範'},
 };
 // Default input values: only the web protocols pre-fill (canonical demo URLs).
