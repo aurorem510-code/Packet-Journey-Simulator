@@ -655,7 +655,7 @@ abbr.jargon:hover{color:var(--accent)}
       </div>
       <div class="logo-copy">
         <div class="logo-title">Packet Journey Simulator</div>
-        <div class="logo-sub">封包旅行模擬器 · v37.0</div>
+        <div class="logo-sub">封包旅行模擬器 · v37.1</div>
       </div>
     </a>
   </div>
@@ -1651,7 +1651,7 @@ function buildSmtpSteps(scenario, host) {
     {
       id:'smtp-auth', stageIdx:5,
       title:'STARTTLS + AUTH — 加密認證', titleEN:'STARTTLS & AUTH LOGIN',
-      protocol:'SMTP / TLS', layer:'Application', packetType:'STARTTLS + AUTH',
+      protocol:'SMTP / TLS', layer:['Application','Presentation'], packetType:'STARTTLS + AUTH',
       badgeClass:'b-smtp', badgeText:'SMTP',
       from:'browser', to:'webserver', pkt:'AUTH', pktColor:'#C084FC',
       activeNodes:['browser','webserver'], activeEdges:['e-bw'],
@@ -3283,55 +3283,17 @@ function buildSlaacSteps(scenario, host){
   return S;
 }
 
-// ─── FOUNDATION COMPOSER (DHCP prefix + NAT injection) ──
-// DHCP runs ONCE before any app gets an IP. NAT happens transparently around
-// the TCP path. Both can decorate any selected app protocol.
-function makeNatAugStep(direction, stageIdx){
-  if(direction==='out'){
-    return {
-      id:'nat-aug-out', stageIdx,
-      title:'NAT 出口翻譯（SNAT）', titleEN:'NAT Outbound Translation',
-      protocol:'NAT / NAPT', layer:['Network','Transport'], packetType:'SNAT',
-      badgeClass:'b-nat', badgeText:'NAT',
-      from:'browser', to:'webserver', pkt:'SNAT', pktColor:'#FB923C',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'NAT', kpiLat:'~ 0.5ms', kpiStatus:'SNAT',
-      what:'封包離開 LAN 前，路由器 NAT 把 src 192.168.1.42:51234 改寫為 203.0.113.5:60001 並建表。對 TCP 看起來「同一條連線」，實際上四元組已被路由器改變。',
-      details:[
-        {k:'Original src',v:'192.168.1.42:51234'},
-        {k:'Translated src',v:'203.0.113.5:60001',c:'c-success'},
-        {k:'NAT Table',v:'192.168.1.42:51234 ⇄ 203.0.113.5:60001'},
-        {k:'Note',v:'這一步在純 HTTPS 流程中看不見 — 是 Foundation:NAT 把它「攤開」了'},
-      ],
-      tech:'每條 TCP 連線都會經歷 SNAT（出口）+ DNAT（入口）。實作上由路由器的 conntrack 模組維護表項，到期或重啟即遺失。',
-      fail:null,
-      interview:'NAT 對使用者透明，對工程師不透明：debug source IP 不對、conntrack 表滿、idle timeout 殺連線、CGNAT 折磨等問題都源自 NAT。',
-    };
-  } else {
-    return {
-      id:'nat-aug-in', stageIdx,
-      title:'NAT 入口反向翻譯（DNAT）', titleEN:'NAT Inbound Translation',
-      protocol:'NAT / NAPT', layer:['Network','Transport'], packetType:'DNAT',
-      badgeClass:'b-nat', badgeText:'NAT',
-      from:'webserver', to:'browser', pkt:'DNAT', pktColor:'#FB923C',
-      activeNodes:['browser','webserver'], activeEdges:['e-bw'],
-      kpiProto:'NAT', kpiLat:'~ 0.5ms', kpiStatus:'DNAT',
-      what:'伺服器把回應送到公網 NAT IP（203.0.113.5:60001）。NAT 路由器查表，把 dst 還原為 192.168.1.42:51234 後丟回 LAN，客戶端才收得到 SYN-ACK。',
-      details:[
-        {k:'Server sent dst',v:'203.0.113.5:60001'},
-        {k:'NAT lookup',v:'192.168.1.42:51234',c:'c-info'},
-        {k:'Forwarded to',v:'192.168.1.42:51234',c:'c-success'},
-      ],
-      tech:'若 NAT 表沒有對應條目（剛重啟、idle 太久被清掉），這個 SYN-ACK 會被直接丟棄 — 這是「家用路由器斷電後所有連線斷掉」的根因。',
-      fail:null,
-      interview:'手機 idle 久了 push 不到，常見原因之一就是 NAT idle timeout。LINE/IG 用心跳維持條目就是為這個。',
-    };
-  }
-}
-
+// ─── FOUNDATION COMPOSER (DHCP prefix + NAT annotation) ──
+// DHCP runs ONCE before any app gets an IP. NAT is applied as annotations
+// onto existing TCP handshake steps (no extra packets injected) — see
+// composeFoundation below.
 function composeFoundation(appSteps, foundation, scenario, host, protocol){
-  // Standalone DHCP/NAT protocol mode → don't double-apply foundation
-  if(protocol==='dhcp' || protocol==='nat') return appSteps;
+  // Standalone foundation modes never compose with themselves:
+  //   - DHCP / NAT: already the focus protocol
+  //   - SLAAC: IPv6 self-config — DHCP (IPv4) / NAT (IPv4) are conceptually
+  //            incompatible (you can't "DHCP-boot before SLAAC"; they're for
+  //            different IP versions and dual-stack would be a separate flow)
+  if(protocol==='dhcp' || protocol==='nat' || protocol==='slaac') return appSteps;
   if(!foundation || foundation==='none') return appSteps;
   let result = appSteps.map(s => ({...s}));
 
@@ -3993,7 +3955,7 @@ function scaleStepLatencies(S, profile){
   const factor  = baseRtt / 20;
   // Steps that ALWAYS happen on local LAN regardless of target host distance.
   // DHCP only talks to the LAN gateway; NAT rewrite is at the home router.
-  const localOnly = id => /^(dhcp-|nat-aug-)/.test(id||'');
+  const localOnly = id => /^(dhcp-|nat-translate-)/.test(id||'');
   const rewriteStr = (s, useFactor) => {
     if(typeof s !== 'string') return s;
     return s.replace(/~\s*(\d+(?:\.\d+)?)\s*ms/g, (_,n)=>{
@@ -4496,8 +4458,8 @@ function updateNatBadge(){
   if(!step){ badge.setAttribute('display','none'); return; }
   // Show for standalone NAT translation steps OR Foundation:NAT-tagged steps
   let kind = null;
-  if(step.id==='nat-translate-out' || step.id==='nat-aug-out') kind='SNAT';
-  else if(step.id==='nat-translate-in' || step.id==='nat-aug-in') kind='DNAT';
+  if(step.id==='nat-translate-out') kind='SNAT';
+  else if(step.id==='nat-translate-in') kind='DNAT';
   else if(state.foundation==='nat' || state.foundation==='both'){
     // Foundation NAT-tagged steps (annotations applied in composeFoundation)
     const outIds = new Set(['dns-query','tcp-syn','tcp-ack','tls-clienthello','tls-finished','http-req']);
@@ -5309,7 +5271,7 @@ function initSim() {
   const foundationEl=document.getElementById('foundationSel');
   state.foundation = foundationEl ? foundationEl.value : 'none';
   // Foundation only makes sense for app protocols. Standalone DHCP/NAT views ignore it.
-  if(protocol==='dhcp' || protocol==='nat') state.foundation='none';
+  if(protocol==='dhcp' || protocol==='nat' || protocol==='slaac') state.foundation='none';
   if(protocol==='snmp') state.dnsMode='cached';
   state.netProfile = detectNetworkProfile(host);
   state.steps=scaleStepLatencies(applyAnalogies(buildSteps(state.scenario,state.host,state.protocol)), state.netProfile);
